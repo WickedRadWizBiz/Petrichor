@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Petrichor</title>
+    <style>
+      /* Fallback for Orbitron if we can't load it or until we inline it */
+      @font-face {
+        font-family: 'Orbitron';
+        font-style: normal;
+        font-weight: 400;
+        src: local('Orbitron'); /* Rely on system or eventually inline base64 */
+      }
+      body {
+        margin: 0;
+        background-color: #0f172a;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
