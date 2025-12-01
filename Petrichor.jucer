@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="PetrichorID" name="Petrichor" projectType="audioplug" useAppConfig="0"
+              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1"
+              companyName="PetrichorLabs" pluginFormats="buildVST3,buildAU,buildStandalone"
+              pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn">
+  <MAINGROUP id="g12345" name="Petrichor">
+    <GROUP id="{SOURCE_GROUP}" name="Source">
+      <GROUP id="{DSP_GROUP}" name="DSP">
+        <FILE id="f1" name="HygroEngine.cpp" compile="1" resource="0" file="Source/DSP/HygroEngine.cpp"/>
+        <FILE id="f2" name="HygroEngine.h" compile="0" resource="0" file="Source/DSP/HygroEngine.h"/>
+        <FILE id="f3" name="PhysicalString.cpp" compile="1" resource="0" file="Source/DSP/PhysicalString.cpp"/>
+        <FILE id="f4" name="PhysicalString.h" compile="0" resource="0" file="Source/DSP/PhysicalString.h"/>
+        <FILE id="f5" name="PolyphonicVoiceManager.cpp" compile="1" resource="0" file="Source/DSP/PolyphonicVoiceManager.cpp"/>
+        <FILE id="f6" name="PolyphonicVoiceManager.h" compile="0" resource="0" file="Source/DSP/PolyphonicVoiceManager.h"/>
+        <FILE id="f7" name="RainEngine.cpp" compile="1" resource="0" file="Source/DSP/RainEngine.cpp"/>
+        <FILE id="f8" name="RainEngine.h" compile="0" resource="0" file="Source/DSP/RainEngine.h"/>
+        <FILE id="f9" name="ThunderModule.cpp" compile="1" resource="0" file="Source/DSP/ThunderModule.cpp"/>
+        <FILE id="f10" name="ThunderModule.h" compile="0" resource="0" file="Source/DSP/ThunderModule.h"/>
+        <FILE id="f11" name="WindModule.cpp" compile="1" resource="0" file="Source/DSP/WindModule.cpp"/>
+        <FILE id="f12" name="WindModule.h" compile="0" resource="0" file="Source/DSP/WindModule.h"/>
+      </GROUP>
+      <GROUP id="{UI_GROUP}" name="UI">
+        <FILE id="f13" name="WebUI.cpp" compile="1" resource="0" file="Source/UI/WebUI.cpp"/>
+        <FILE id="f14" name="WebUI.h" compile="0" resource="0" file="Source/UI/WebUI.h"/>
+      </GROUP>
+      <FILE id="f15" name="PluginEditor.cpp" compile="1" resource="0" file="Source/PluginEditor.cpp"/>
+      <FILE id="f16" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+      <FILE id="f17" name="PluginProcessor.cpp" compile="1" resource="0" file="Source/PluginProcessor.cpp"/>
+      <FILE id="f18" name="PluginProcessor.h" compile="0" resource="0" file="Source/PluginProcessor.h"/>
+    </GROUP>
+    <GROUP id="{ASSETS_GROUP}" name="Assets">
+        <FILE id="index_html" name="index.html" compile="0" resource="1" file="frontend/dist/index.html"/>
+    </GROUP>
+  </MAINGROUP>
+  <MODULES>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_dsp" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
+  </MODULES>
+  <JUCEOPTIONS JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_VST3_CAN_REPLACE_VST2="0"/>
+  <EXPORTFORMATS>
+    <XCODE_MAC targetFolder="Builds/MacOSX" extraDefs="JUCE_WEB_BROWSER_WORK_AROUND=1">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="Petrichor"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="Petrichor"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_core" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_data_structures" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_dsp" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_events" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_graphics" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="JuceLibraryCode/modules"/>
+      </MODULEPATHS>
+    </XCODE_MAC>
+    <VS2022 targetFolder="Builds/VisualStudio2022" extraDefs="JUCE_WEB_BROWSER_WORK_AROUND=1">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="Petrichor"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="Petrichor"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_core" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_data_structures" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_dsp" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_events" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_graphics" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="JuceLibraryCode/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="JuceLibraryCode/modules"/>
+      </MODULEPATHS>
+    </VS2022>
+  </EXPORTFORMATS>
+</JUCERPROJECT>
