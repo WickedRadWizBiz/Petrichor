@@ -1,9 +1,214 @@
+/* Fonts are bundled from @fontsource (latin subset, woff2 only) and inlined by vite-plugin-singlefile. */
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-500-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../node_modules/@fontsource/manrope/files/manrope-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../node_modules/@fontsource/manrope/files/manrope-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Everything scales with the editor window (900x600 .. 2000x1400). */
+    font-size: clamp(12px, calc(0.42vw + 0.62vh + 3.6px), 19px);
+    --knob: clamp(34px, min(4.1vw, 6.4vh), 78px);
+    --pad: clamp(10px, 1.2vw, 22px);
+    --gap: clamp(6px, 0.9vh, 14px);
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
   body {
-    @apply bg-slate-900 text-white font-orbitron overflow-hidden select-none;
+    @apply bg-ink-900 font-sans text-mist-200 antialiased select-none;
+    background-image:
+      radial-gradient(1200px 600px at 12% -10%, rgba(79, 188, 216, 0.09), transparent 60%),
+      radial-gradient(900px 500px at 105% 110%, rgba(212, 163, 115, 0.07), transparent 60%),
+      linear-gradient(180deg, #080d16 0%, #070b12 100%);
+    font-feature-settings: "ss01", "tnum";
+  }
+
+  :focus {
+    outline: none;
+  }
+}
+
+@layer components {
+  .panel {
+    position: relative;
+    border-radius: 14px;
+    background:
+      linear-gradient(180deg, rgba(28, 43, 66, 0.55) 0%, rgba(14, 22, 36, 0.62) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(197, 212, 226, 0.07),
+      inset 0 0 0 1px rgba(122, 142, 166, 0.11),
+      0 10px 30px -18px rgba(0, 0, 0, 0.9);
+  }
+
+  .overlay-card {
+    border-radius: 10px;
+    padding: 0.45rem 0.6rem;
+    background: rgba(5, 8, 14, 0.58);
+    box-shadow: inset 0 0 0 1px rgba(122, 142, 166, 0.14);
+  }
+
+  .eyebrow {
+    @apply font-sans font-bold uppercase text-mist-500;
+    font-size: 0.6rem;
+    letter-spacing: 0.16em;
+  }
+
+  .num {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Knobs */
+  .knob {
+    width: var(--knob);
+    height: var(--knob);
+    cursor: ns-resize;
+    touch-action: none;
+    border-radius: 9999px;
+    position: relative;
+  }
+  .knob--lg {
+    width: calc(var(--knob) * 1.3);
+    height: calc(var(--knob) * 1.3);
+  }
+  .knob:focus-visible {
+    box-shadow: 0 0 0 2px rgba(125, 211, 232, 0.65), 0 0 18px rgba(125, 211, 232, 0.25);
+  }
+  .knob svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .knob .value-arc {
+    transition: stroke 160ms ease;
+  }
+
+  /* Keyboard */
+  .keybed {
+    position: relative;
+    touch-action: none;
+    cursor: pointer;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #04070c;
+    box-shadow: inset 0 0 0 1px rgba(122, 142, 166, 0.14), 0 14px 30px -20px rgba(0, 0, 0, 0.9);
+  }
+  .key {
+    position: absolute;
+    top: 0;
+    --lvl: 0;
+    pointer-events: none;
+  }
+  .key--white {
+    bottom: 0;
+    border-radius: 0 0 5px 5px;
+    background: linear-gradient(180deg, #223149 0%, #2c3e58 72%, #33475f 100%);
+    box-shadow: inset -1px 0 0 rgba(4, 7, 12, 0.85), inset 0 -2px 0 rgba(197, 212, 226, 0.08);
+  }
+  .key--black {
+    height: 62%;
+    z-index: 2;
+    border-radius: 0 0 4px 4px;
+    background: linear-gradient(180deg, #05080d 0%, #0d1522 85%, #1a2638 100%);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.65), inset 0 -3px 0 rgba(122, 142, 166, 0.16), inset 1px 0 0 rgba(122, 142, 166, 0.08);
+  }
+  .key .glow {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: var(--lvl);
+    background:
+      radial-gradient(120% 70% at 50% 100%, rgba(168, 230, 244, 0.95) 0%, rgba(79, 188, 216, 0.55) 45%, rgba(79, 188, 216, 0) 100%);
+    mix-blend-mode: screen;
+  }
+  .key--black .glow {
+    background: radial-gradient(130% 80% at 50% 100%, rgba(168, 230, 244, 0.9) 0%, rgba(79, 188, 216, 0.45) 50%, rgba(79, 188, 216, 0) 100%);
+  }
+  .key .strike {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0;
+    background: linear-gradient(180deg, rgba(255, 251, 224, 0.0) 0%, rgba(251, 241, 181, 0.85) 100%);
+    mix-blend-mode: screen;
+  }
+  .key.is-struck .strike {
+    animation: key-strike 700ms ease-out;
+  }
+  .key.is-down.key--white {
+    background: linear-gradient(180deg, #1c2a40 0%, #26374f 80%, #2c3f57 100%);
+  }
+  .key.is-down.key--black {
+    background: linear-gradient(180deg, #05080d 0%, #0b121e 100%);
+  }
+  .key .octave {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 4px;
+    text-align: center;
+    font-size: 0.55rem;
+    letter-spacing: 0.02em;
+    color: rgba(159, 178, 198, 0.55);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+}
+
+@keyframes key-strike {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key.is-struck .strike {
+    animation-duration: 1400ms;
+  }
+  .knob .value-arc {
+    transition: none;
   }
 }
