@@ -1,5 +1,7 @@
 import React from "react";
-import { GROUPS } from "../params";
+import { GROUPS, modeRelevance } from "../params";
+import { useParam } from "../juce";
+import BlendSlider from "./BlendSlider";
 import Knob from "./Knob";
 
 const TITLE_COLOR = {
@@ -18,8 +20,8 @@ const DOT_COLOR = {
 
 // Captions with real sub/superscripts (plain-text versions live in params.js).
 const CAPTIONS = {
-  thunder: <>Velocity is distance: x &prop; (127 &minus; V)</>,
-  wind: <>Sustain breathes at f = St&middot;U / L</>,
+  thunder: <>Always fused: the strike is the lightning, x &prop; (127 &minus; V)</>,
+  wind: <>Fused notes bend like wind pitch, f &prop; U</>,
   rain: (
     <>
       Gusts raise R; &Lambda; = 4.1&thinsp;R<sup className="text-[0.5rem]">&minus;0.21</sup>
@@ -69,6 +71,22 @@ function GroupGlyph({ group }) {
   }
 }
 
+/** A knob that fades (but stays usable) when the Overlay/Fuse blend makes it irrelevant. */
+function ModeKnob({ spec, blendId, accent }) {
+  const blend = useParam(blendId);
+  const relevance = modeRelevance(spec, blend.value);
+  return (
+    <div
+      className="min-w-0 transition-opacity duration-150"
+      style={{ opacity: 0.32 + 0.68 * relevance }}
+      data-mode={spec.mode}
+      title={relevance < 0.25 ? `${spec.mode === "fuse" ? "Fuse" : "Overlay"} control - move the blend toward ${spec.mode === "fuse" ? "Fuse" : "Overlay"} to hear it` : undefined}
+    >
+      <Knob id={spec.id} accent={accent} />
+    </div>
+  );
+}
+
 function Group({ group }) {
   const large = group.id === "master";
   return (
@@ -84,13 +102,18 @@ function Group({ group }) {
         </h2>
         <p className="mt-[0.2rem] line-clamp-2 text-[0.64rem] leading-snug text-mist-400">{CAPTIONS[group.id] ?? group.caption}</p>
       </header>
+      {group.blend && <BlendSlider id={group.blend.id} accent={group.accent} />}
       <div
         className={`mt-auto grid ${large ? "flex-1 place-items-center" : "gap-x-[0.2rem] gap-y-[0.35rem]"}`}
         style={{ gridTemplateColumns: `repeat(${group.cols}, minmax(0, 1fr))` }}
       >
-        {group.params.map((p) => (
-          <Knob key={p.id} id={p.id} accent={group.accent} large={large} />
-        ))}
+        {group.params.map((p) =>
+          p.mode && group.blend ? (
+            <ModeKnob key={p.id} spec={p} blendId={group.blend.id} accent={group.accent} />
+          ) : (
+            <Knob key={p.id} id={p.id} accent={group.accent} large={large} />
+          ),
+        )}
       </div>
     </section>
   );

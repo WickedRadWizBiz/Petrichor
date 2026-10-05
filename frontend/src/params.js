@@ -27,7 +27,7 @@ export const PARAMS = [
     desc: "Mistuning between the strings of a unison: beating and a two-stage decay." },
   { id: "stereo_width", name: "Stereo Width", short: "Width", unit: "", min: 0, max: 1, def: 0.7, centre: 0, group: "piano",
     desc: "Spreads the keys across the stereo field, bass to the left, treble to the right." },
-  { id: "piano_level", name: "Piano Level", short: "Level", unit: "dB", min: -24, max: 6, def: 0, centre: 0, origin: 0, group: "piano",
+  { id: "piano_level", name: "Piano Level", short: "Level", unit: "dB", min: -24, max: 6, def: 0, centre: -100, origin: 0, group: "piano",
     desc: "Gain of the struck strings." },
   { id: "tuning", name: "Tuning A4", short: "A4", unit: "Hz", min: 415, max: 466, def: 440, centre: 0, origin: 440, group: "piano",
     desc: "Reference pitch: every string is tuned relative to A4." },
@@ -36,13 +36,13 @@ export const PARAMS = [
   { id: "storm_distance", name: "Storm Distance", short: "Distance", unit: "m", min: 50, max: 4000, def: 1200, centre: 800, group: "thunder",
     desc: "Where the softest strike (V = 1) lands: x = D\u00B7(127 \u2212 V)/126, so hard hits land overhead." },
   { id: "crack_level", name: "Crack", short: "Crack", unit: "", min: 0, max: 1, def: 0.5, centre: 0, group: "thunder",
-    desc: "Level of the near-field crack, the N-wave shock of the lightning channel." },
-  { id: "air_absorption", name: "Air Absorption", short: "Air Abs.", unit: "", min: 0, max: 1, def: 0.4, centre: 0, group: "thunder",
-    desc: "High-frequency loss over distance, e^(\u2212\u03B1(f)\u00B7x) with \u03B1 \u221D f\u00B2: far strikes thud." },
+    desc: "Broadband crack inside the hammer's force, S(t) = A e^(−t/τ) n(t). Heard only through the string's partials; harder strikes crack more." },
+  { id: "air_absorption", name: "Air Absorption", short: "Air Abs.", unit: "", min: 0, max: 1, def: 0.5, centre: 0, group: "thunder",
+    desc: "How strongly distance darkens the strike: every partial's excitation is weighted by e^(−α(f)·x), α ∝ f²." },
   { id: "rumble_mix", name: "Rumble", short: "Rumble", unit: "", min: 0, max: 1, def: 0.35, centre: 0, group: "thunder",
-    desc: "Multipath rumble: delayed echoes from the tortuous channel and the terrain." },
+    desc: "Multipath: distant strikes roll through several delayed, darker re-contacts of hammer and string, and drive the body's rumble harder." },
   { id: "rumble_decay", name: "Rumble Decay", short: "Decay", unit: "s", min: 0.5, max: 12, def: 5, centre: 4, group: "thunder",
-    desc: "Length of the rolling tail; distant strikes stretch it further." },
+    desc: "Ring of the body rumble the strings drive; distant strikes send more into its longest zone." },
 
   // Wind
   { id: "wind_speed", name: "Wind Speed", short: "Speed", unit: "m/s", min: 0, max: 30, def: 8, centre: 8, group: "wind",
@@ -51,25 +51,31 @@ export const PARAMS = [
     desc: "Turbulence intensity I: gust factor 1 + I\u00B7G(t), with a von K\u00E1rm\u00E1n / Kolmogorov \u22125/3 spectrum." },
   { id: "gust_length", name: "Gust Length", short: "Gust Len.", unit: "m", min: 2, max: 100, def: 12, centre: 15, group: "wind",
     desc: "Integral length scale L: bigger eddies give slower, broader swells (corner f = U / 8.4L)." },
-  { id: "wind_drift", name: "Doppler Drift", short: "Drift", unit: "", min: 0, max: 1, def: 0.35, centre: 0, group: "wind",
-    desc: "Doppler micro-pitch drift as gusts carry the sound toward and away from you." },
-  { id: "wind_filter", name: "Gust Filter", short: "Filter", unit: "", min: 0, max: 1, def: 0.4, centre: 0, group: "wind",
-    desc: "Depth of the resonant band-pass that sweeps with the gusts." },
-  { id: "wind_air", name: "Wind Air", short: "Air", unit: "", min: 0, max: 1, def: 0.15, centre: 0, group: "wind",
-    desc: "Level of the broadband wind noise itself." },
+  { id: "wind_blend", name: "Wind Overlay/Fuse", short: "Overlay ↔ Fuse", unit: "", min: 0, max: 1, def: 0.7, centre: 0, group: "wind", blend: true,
+    desc: "Overlay: the wind is heard beside the piano (roar and whistling wires). Fuse: the wind moves inside the notes, bending pitch and timbre like wind bends a whistle." },
+  { id: "wind_pitch", name: "Wind Pitch", short: "Pitch", unit: "", min: 0, max: 1, def: 0.35, centre: 0, group: "wind", mode: "fuse",
+    desc: "Fuse: each note bends with the wind the way an Aeolian tone does (f ∝ U): pitch ratio (U_key / U)^depth. Stronger wind bends further." },
+  { id: "wind_timbre", name: "Wind Timbre", short: "Timbre", unit: "", min: 0, max: 1, def: 0.4, centre: 0, group: "wind", mode: "fuse",
+    desc: "Fuse: gusts brighten the note, lulls darken it, and a gentle resonant band-pass sweeps across its harmonics." },
+  { id: "wind_air", name: "Air Level", short: "Air", unit: "", min: 0, max: 1, def: 0.3, centre: 0, group: "wind", mode: "overlay",
+    desc: "Overlay: level of the audible wind, a roar ∝ U² and wires whistling at f = St·U / D." },
 
   // Rain
   { id: "rain_rate", name: "Rain Rate", short: "Rate", unit: "mm/h", min: 0, max: 150, def: 8, centre: 15, group: "rain",
     desc: "Rainfall R. Marshall\u2013Palmer \u039B = 4.1\u00B7R^\u22120.21: heavier rain, more and bigger drops." },
   { id: "rain_coupling", name: "Wind Coupling", short: "Coupling", unit: "", min: 0, max: 1, def: 0.6, centre: 0, group: "rain",
-    desc: "How hard gusts drive the rain: R(t) = R\u00B7(1 + I\u00B7G)^3k." },
+    desc: "How hard gusts drive the rain: R(t) = R\u00B7(1 + I\u00B7G)^3k (needs wind)." },
   { id: "rain_level", name: "Rain Level", short: "Level", unit: "", min: 0, max: 1, def: 0.35, centre: 0, group: "rain",
-    desc: "Level of the granular rain bed." },
+    desc: "Amount of rain texture, in both overlay and fuse." },
   { id: "rain_surface", name: "Puddles", short: "Puddles", unit: "", min: 0, max: 1, def: 0.3, centre: 0, group: "rain",
     desc: "Share of drops landing in water: bubble pings at the Minnaert frequency f \u2248 3.26 / a." },
+  { id: "rain_blend", name: "Rain Overlay/Fuse", short: "Overlay ↔ Fuse", unit: "", min: 0, max: 1, def: 0.5, centre: 0, group: "rain", blend: true,
+    desc: "Overlay: a rain layer beside the piano that follows its playing and the wind. Fuse: rain inside the notes — drops land on the ringing strings and the patter textures the tone." },
+  { id: "rain_follow", name: "Piano Follow", short: "Follow", unit: "", min: 0, max: 1, def: 0.6, centre: 0, group: "rain", mode: "overlay",
+    desc: "Overlay: how much the rain layer listens to the piano. Louder playing brings denser, louder drops whose tone leans toward the piano's." },
 
   // Master
-  { id: "master", name: "Master", short: "Master", unit: "dB", min: -24, max: 6, def: -2, centre: 0, origin: 0, group: "master",
+  { id: "master", name: "Master", short: "Master", unit: "dB", min: -24, max: 6, def: -2, centre: -100, origin: 0, group: "master",
     desc: "Output gain after the whole storm." },
 ];
 
@@ -78,21 +84,32 @@ export const PARAM_BY_ID = Object.fromEntries(PARAMS.map((p) => [p.id, p]));
 /** Display order of the control deck. `cols` = knob columns inside the group. */
 export const GROUPS = [
   { id: "thunder", title: "Thunder", accent: "bolt", cols: 3,
-    caption: "Velocity is distance: x ∝ (127 − V)",
-    long: "Each hammer strike is a lightning strike. Hard hits crack overhead; soft hits are distant thuds whose highs the air has absorbed, followed by long multipath rumble." },
+    caption: "Always fused: the hammer strike is the lightning",
+    long: "Velocity is distance, x ∝ (127 − V). Hard hits are one bright overhead contact; soft hits roll through darker re-contacts and longer decays, all heard through the string." },
   { id: "wind", title: "Wind", accent: "mist", cols: 3,
-    caption: "Sustain breathes at f = St·U / L",
-    long: "Kolmogorov turbulence modulates the sustain. Each key's LFO follows the Strouhal law f = St U / L: low keys sway slowly, high keys flutter." },
-  { id: "rain", title: "Rain", accent: "rain", cols: 2,
+    caption: "Fused notes bend like wind pitch, f ∝ U",
+    long: "Overlay: hear the wind itself. Fuse: Kolmogorov turbulence bends each note's pitch and timbre the way wind bends a whistle; each key moves at its Strouhal rate f = St U / L, low keys slowly, high keys fast." },
+  { id: "rain", title: "Rain", accent: "rain", cols: 3,
     caption: "Gusts raise R; Λ = 4.1 R^−0.21",
-    long: "Granular Marshall-Palmer rain. Gusts raise the rainfall rate R: more drops, bigger drops, brighter impacts." },
+    long: "Marshall-Palmer rain driven by the wind's gusts. Overlay: a texture layer beside the piano that follows its playing. Fuse: rain inside the notes, landing on the strings." },
   { id: "piano", title: "Piano", accent: "earth", cols: 3,
     caption: "Stiff strings, felt hammers",
     long: "The instrument itself: hammer felt, unison detune, decay, width and tuning." },
   { id: "master", title: "Master", accent: "mist", cols: 1,
     caption: "Output gain",
     long: "Output gain." },
-].map((g) => ({ ...g, params: PARAMS.filter((p) => p.group === g.id) }));
+].map((g) => ({
+  ...g,
+  blend: PARAMS.find((p) => p.group === g.id && p.blend) || null,
+  params: PARAMS.filter((p) => p.group === g.id && !p.blend),
+}));
+
+/** How relevant a mode-specific control is at a given Overlay/Fuse blend (equal-power, as the engine). */
+export function modeRelevance(spec, blend) {
+  if (!spec.mode) return 1;
+  const b = Math.min(1, Math.max(0, blend)) * Math.PI * 0.5;
+  return spec.mode === "fuse" ? Math.sin(b) : Math.cos(b);
+}
 
 //==============================================================================
 // Ranges (JUCE NormalisableRange semantics)

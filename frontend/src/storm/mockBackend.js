@@ -60,7 +60,8 @@ export function createMockBackend({ getValue, publish, hz = 30 }) {
 
     // Rain: R(t) = R (1 + I G)^(3k), smoothed over 250 ms.
     const coupling = clamp(getValue("rain_coupling"), 0, 1);
-    const target = Math.max(getValue("rain_rate"), 0) * Math.pow(gustFactor, 3 * coupling);
+    const drive = clamp(meanU / 8, 0, 1); // no wind, no gust swell
+    const target = Math.max(getValue("rain_rate"), 0) * Math.pow(Math.max(0, 1 + drive * (gustFactor - 1)), 3 * coupling);
     rain += (target - rain) * (1 - Math.exp(-dt / 0.25));
 
     let grainRate = 0;
@@ -75,7 +76,9 @@ export function createMockBackend({ getValue, publish, hz = 30 }) {
 
     // Keys: ring down with a key-dependent T60 scaled by Sustain, breathe at the Strouhal rate.
     const sustain = getValue("sustain");
-    const drift = clamp(getValue("wind_drift"), 0, 1);
+    // Fused wind makes the keys waver; overlay leaves them still.
+    const fuse = Math.sin(clamp(getValue("wind_blend"), 0, 1) * Math.PI * 0.5);
+    const drift = clamp(getValue("wind_pitch"), 0, 1) * fuse;
     const keyLevels = new Array(KEY_COUNT).fill(0);
     let activeVoices = 0;
     for (const [key, s] of keys) {

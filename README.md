@@ -1,12 +1,26 @@
 # Petrichor Piano
 
-Petrichor Piano is a physically modelled piano played inside a storm. Each key is a stiff, inharmonic string built from a bank of modal resonators. Each hammer blow is also a lightning strike, so how hard you play sets how far away the thunder is: a fortissimo cracks overhead, and a pianissimo arrives muffled and rolling from a kilometre or more away. While a chord sustains, Kolmogorov turbulence bends its pitch and sweeps a resonance through its partials, and each note's own Strouhal number sets the tempo of that turbulence. Underneath, Marshall-Palmer rain falls more heavily in the gusts and thins to a sparse, low hiss when the wind drops.
+Petrichor Piano is a physically modelled piano played inside a storm. Each key is a stiff, inharmonic string built from a bank of modal resonators, and the storm is made of the same physics:
+
+- **Thunder is the hammer strike.** How hard you play sets how far away the lightning is. A fortissimo is one bright contact overhead; a pianissimo reaches the string muffled by kilometres of air and rolls through several smeared re-contacts. There is no separate thunder sound: you hear it through the string.
+- **Wind** either blows beside the piano (*overlay*: roar and whistling wires) or *fuses* into the notes, bending each note's pitch and timbre the way gusts bend a whistle's pitch, with each key moving at its own Strouhal tempo.
+- **Rain** either falls beside the piano as a granular texture that listens to your playing and to the wind (*overlay*), or *fuses* into the sound: drops land on the ringing strings and the patter textures each note from inside.
 
 It builds as a VST3, AU and Standalone instrument (JUCE 8) with an offline React UI. The sound comes from a JUCE-free C++17 engine, so you can test it and render audio from the command line without a host.
 
 - 64 voices, each with up to 96 partials and 2 modes per partial. Voices are stolen by kinetic energy.
 - Events are sample accurate, because the plug-in splits every block at MIDI timestamps. Modulation runs at a 32-sample control rate.
 - After `prepare()`, the engine is real-time safe and deterministic: it allocates nothing, takes no locks, and uses fixed seeds.
+
+### Overlay and Fuse
+
+Wind and Rain each have an **Overlay ↔ Fuse** slider. The blend is equal-power: overlay gain $\cos(b\pi/2)$, fuse amount $\sin(b\pi/2)$.
+
+| | Overlay (left) | Fuse (right) |
+|---|---|---|
+| **Wind** | The wind is its own sound beside the piano: a roar that follows dynamic pressure ($\propto U^2$) and three wires whistling at $f = St\,U/D$ (`wind_air`). The notes are untouched. | The wind lives inside the notes: each note's pitch follows the local wind like an Aeolian tone ($f \propto U$), gusts tilt its brightness and sweep a resonance through its partials (`wind_pitch`, `wind_timbre`). |
+| **Rain** | A texturiser-style layer beside the piano: Marshall-Palmer grains driven by the wind's gusts *and* by the piano: louder playing brings denser, louder drops whose tone leans toward the piano's (`rain_follow`). | A texture modulation inside the piano sound: drops land on the ringing strings and sound in the chord's own partials, a rain hiss excites the strings' modes, and the drop patter modulates the tone grain by grain. Silent when nothing is sounding. |
+| **Thunder** | (no slider: always fused) | The strike is the lightning: velocity is distance, and the crack, the air absorption and the multipath roll all happen in the hammer-string contact. |
 
 ---
 
@@ -22,15 +36,19 @@ It builds as a VST3, AU and Standalone instrument (JUCE 8) with an offline React
  PetrichorEngine::process        control tick every 32 samples
  +-------------------------------------------------------------------------------------------+
  | StormWind     U(t) = U (1 + I G(t)),  G = Kolmogorov noise, corner U / (8.41 L)           |
- |   |  WindState { speed, gust, gustFactor, intensity }                                     |
- |   +--> PianoVoice x 64      modal stiff string, gamma-pulse hammer                        |
- |   |      per-voice LFO at St U f0 / c  -> Doppler pitch, band-pass weights, swell         |
- |   |      lightning crack S(t) -> 4-pole absorption low-pass, fc ~ 1/sqrt(x)               |
- |   |        +-- equal-power key pan (bass left) -------------------------------> dry bus  |
+ |   |  WindState { meanSpeed, speed, gust, gustFactor, intensity }                          |
+ |   +--> RainTexture.beginBlock   R(t) -> Lambda -> flux -> Poisson drop events             |
+ |   |        fused drops ------------------------> land on strings (energy-weighted)        |
+ |   +--> PianoVoice x 64      modal stiff string                                            |
+ |   |      force = (gamma felt pulse + crack) * multipath h(t), exp(-alpha f^2 x) per mode   |
+ |   |      fused wind: pitch (U_key/U)^depth, brightness tilt, band-pass weights            |
+ |   |      fused rain: drop impulses + hiss into the modes (open-loop strike reference)     |
+ |   |        +-- equal-power key pan (bass left) -----------------------> piano bus         |
  |   |        +-- send = mix (0.12 + 0.88 d) x zone weights(d) --+                           |
- |   +--> MultipathRumble      near / mid / far: 12 rolling taps + 8-line FDN --> wet bus    |
- |   +--> RainTexture          R = R0 (1 + I G)^3c -> Lambda -> flux -> Poisson grains       |
- |   +--> WindAir              roar ~ U^2, Aeolian wire whistles at St U / D                 |
+ |   +--> RainTexture.render   overlay grains (+ piano follow) -> dry bus; patter signal     |
+ |   |      piano bus x (1 + depth * patter)  (fused rain AM) ---------------> dry bus       |
+ |   +--> WindAir              overlay: roar ~ U^2, Aeolian wire whistles at St U / D        |
+ |   +--> MultipathRumble      body rumble: near / mid / far, rolling taps + FDN -> dry bus  |
  |                                   sum -> master gain -> soft knee above 0.8 -> L / R      |
  +-------------------------------------------------------------------------------------------+
              |                                   |
@@ -107,13 +125,13 @@ Fast drops reach the ground more often than their concentration suggests. A drop
 #### Wind-coupled rain rate
 
 $$
-R(t) = R_0 \bigl(1 + I\, G(t)\bigr)^{3c}
+R(t) = R_0 \Bigl(1 + \min\!\bigl(\tfrac{\bar U}{8\ \mathrm{m/s}}, 1\bigr)\,\bigl(g(t) - 1\bigr)\Bigr)^{3c}, \qquad g(t) = 1 + I\, G(t)
 $$
 
-The spec links rainfall rate to the absolute amplitude of the wind LFO. In the code, $1 + I\,G(t)$ is the storm's gust factor (see "Storm gusts" under Wind), $R_0$ is `rain_rate`, and $c$ is `rain_coupling`.
+The spec links rainfall rate to the absolute amplitude of the wind LFO. $g(t)$ is the storm's gust factor (see "Storm gusts" under Wind), $R_0$ is `rain_rate`, and $c$ is `rain_coupling`. The $\min(\bar U/8, 1)$ term makes the swell depend on there actually being wind: in still air the rain does not breathe.
 
 - **Code:** `RainTexture::controlTick()`, smoothed with a 0.25 s time constant.
-- **Sound:** a gust raises $R$, which lowers $\Lambda$ (bigger drops) and raises the flux (denser grains). The gust also raises $U$, which raises the impact speed and makes the texture brighter. In a lull the rain thins to a sparse, low hiss. The tests require a gust (gust factor 1.5, 15 m/s) to more than double the grain rate of a lull (0.6, 6 m/s) and to raise the spectral centroid by more than 30 %. Measured values are 66 vs 169 grains/s and 4.2 vs 6.8 kHz.
+- **Sound:** a gust raises $R$, which lowers $\Lambda$ (bigger drops) and raises the flux (denser grains). The gust also raises $U$, which raises the impact speed and makes the texture brighter. In a lull the rain thins to a sparse, low hiss. The tests require a gust (gust factor 1.5, 15 m/s) to more than double the grain rate of a lull (0.6, 6 m/s) and to raise the spectral centroid by more than 30 %.
 - **Design choice:** the exponent $3c$ is not a meteorological law. At full coupling, $R$ scales like $U^3$, the same way wind power does.
 
 #### Impact grains
@@ -141,7 +159,27 @@ A drop landing in standing water can trap an air bubble, which rings at its Minn
 
 #### Hiss bed
 
-Under the grains sits a diffuse, decorrelated stereo hiss. It is noise through a state-variable low-pass (Q = 0.6) at $0.45\, f_c(\bar v)$, where $\bar v$ is the mean impact speed, followed by a 150 Hz high-pass. Its gain is $0.010\sqrt{\lambda_g/200}\,\sqrt{\bar v/4}$. A lull therefore gives a quiet, dark hiss and a gust a wide, bright one. The rain bus is scaled by $0.9\,\ell^{1.5}$, where $\ell$ is `rain_level`. The code is in `RainTexture::controlTick()` and `RainTexture::render()`.
+Under the overlay grains sits a diffuse, decorrelated stereo hiss: noise through a state-variable low-pass (Q = 0.6) at $0.45\, f_c(\bar v)$, where $\bar v$ is the mean impact speed, followed by a 150 Hz high-pass. Its gain is $0.010\sqrt{\lambda_g/200}\,\sqrt{\bar v/4}$. A lull therefore gives a quiet, dark hiss and a gust a wide, bright one. The rain is scaled by $0.9\,\ell^{1.5}$, where $\ell$ is `rain_level`. Noise is scaled by $\sqrt{f_s/48\,\mathrm{kHz}}$ so levels do not depend on the sample rate. The code is in `RainTexture::controlTick()` and `RainTexture::render()`.
+
+#### Overlay: following the piano
+
+The overlay layer listens to the piano as well as to the wind. The engine measures the dry piano bus every control tick (`PetrichorEngine::controlTick()`):
+
+$$
+e(t) = \frac{\mathrm{RMS}}{0.04}\ \text{(10 ms attack, 300 ms release)}, \qquad
+f_\mathrm{piano} = \frac{f_s}{2\pi}\sqrt{\frac{E[\dot x^2]}{E[x^2]}}
+$$
+
+With $\phi$ = `rain_follow`, the follow factor is $F = (1 - \phi) + \phi\, \min(e, 1.5)$. Each overlay drop sounds with probability $\min(F, 1)$ and is scaled by $\sqrt{\max(F, 1)}$, the hiss by $\sqrt F$, and every grain's centre and the hiss cutoff lean geometrically toward $f_\mathrm{piano}$ by $0.5\,\phi\,\min(e, 1)$. At full follow the overlay is silent when the piano is, as the tests check. Overlay gain is $\cos(b\pi/2)$ of `rain_blend`.
+
+#### Fuse: rain inside the notes
+
+With fuse amount $\varphi = \sin(b\pi/2)$ and texture amount $\ell$, the same drop stream acts on the piano itself:
+
+- **Drops on strings** (`PetrichorEngine::landDrops()`, `PianoVoice::rainDrop()`): each drop lands on one ringing string, chosen at random with probability $\propto \sqrt{E}$, and adds an impulse to its modes shaped by the drop's impact spectrum, a band-pass (Q 0.8) at the drop's centre frequency applied to the mode drive. The impulse adds $a^2 E_\mathrm{ref}$ of energy with $a = s_d \sqrt{P / \lambda_g}$, where $s_d = \sqrt{\min(A_d / 0.12, 6.25)}$ is the compressed drop strength and $P = 2\,\varphi\,\ell\,\min(\rho, 2)$ is the injected power per second ($\rho$ the drop-density factor). More rain means more, smaller taps rather than a louder texture.
+- **Hiss excitation** (`PianoVoice::controlTick()`): once per control period every mode receives a random-amplitude impulse; scaled by $\sqrt{1 - \rho_m^2}$ per mode, this is white noise that settles each mode at a level set by its drive, so the strings sing a rain hiss in their own partials. The total steady hiss energy is $h^2 E_\mathrm{ref}$ with $h = 0.3\,\varphi\,\ell\,\min(\rho, 2)$.
+- **Patter modulation** (`PetrichorEngine::renderBlock()`): the piano bus is multiplied by $\mathrm{clamp}(1 + 1.5\,\varphi\,\ell\, p(t), 0.3, 1.7)$, where $p(t)$ is the sum of the drops' compressed impact envelopes with random polarity, panned like the drops.
+- **Why it cannot run away:** $E_\mathrm{ref}$ is an open-loop reference, the energy the hammer is expected to deliver ($\sum_m (\mathrm{drive}_m \lvert F(f_m)\rvert)^2$, computed analytically at the strike), decaying at the string's slowest rate and with the damper. An earlier version scaled the texture by the string's live energy; texture then fed on itself and grew without bound. Fused rain is silent when no string sounds.
 
 ### Wind
 
@@ -200,34 +238,30 @@ Each note is treated as an obstacle as large as its own acoustic wavelength. Low
 - **Code:** `atmos::strouhalFrequency()` and `atmos::noteObstacleLength()`, used in `PianoVoice::controlTick()`. That function drives the voice's own `KolmogorovNoise` with its corner at $f_\mathrm{LFO}$, clamped to 0.02 to 16 Hz.
 - **Sound:** at $U$ = 10 m/s the corner is 0.16 Hz at A0 ($L$ = 12.5 m), 1.5 Hz at C4, 12 Hz at C7, and 24 Hz at C8, which the clamp limits to 16 Hz. In the tests, the C7 LFO crosses zero more than 5× as often as the A1 LFO (measured: 764 vs 24 crossings in 8 s).
 
-#### Doppler micro-pitch
+#### Fuse: notes bend like wind pitch
 
 $$
-\frac{f'}{f} = \frac{c}{c - u_\mathrm{los}}, \qquad u_\mathrm{los} = 0.5 \cdot \mathrm{drift} \cdot \sigma_u \cdot \ell(t), \qquad \sigma_u = I\, U(t)
+U_\mathrm{key}(t) = \bar U\, g(t)\,\bigl(1 + I\, \ell(t)\bigr), \qquad
+\frac{f'}{f} = \Bigl(\frac{U_\mathrm{key}}{\bar U}\Bigr)^{\delta}, \qquad
+\delta = 0.06\cdot \mathrm{pitch}\cdot \varphi_w \cdot \min\!\bigl(\tfrac{\bar U}{8\ \mathrm{m/s}}, 2\bigr)
 $$
 
-A gust moving the sound toward the listener raises its pitch slightly. Here $\ell(t)$ is the voice's unit-variance LFO and drift is `wind_drift`.
+An Aeolian tone's pitch is proportional to the wind speed ($f = St\,U/L$). Fused, each note follows the local wind at its key the same way, with the exponent $\delta$ taming the excursion: $\ell(t)$ is the key's Strouhal-rate LFO, $g$ the storm gust factor, pitch is `wind_pitch`, $\varphi_w = \sin(b\pi/2)$ of `wind_blend`, and stronger mean wind bends further. At the defaults this is roughly ±10 cents; at full settings in a gale it reaches the ±3 % (about ±51 cents) clamp.
 
-- **Code:** `atmos::dopplerRatio()` clamps $u_\mathrm{los}$ to ±60 m/s. `PianoVoice::applyPitchRatio()` clamps the total ratio to ±3 % and applies it by rotating every mode's pole by $\omega(\mathrm{ratio} - 1)$. The whole stiff-string spectrum shifts while every decay rate stays the same.
-- **Sound:** about 1.5 cents per σ of the LFO at the default settings, and up to about 45 cents per σ at full drift, full turbulence and 30 m/s.
+- **Code:** `PianoVoice::controlTick()`. `PianoVoice::applyPitchRatio()` clamps the ratio to ±3 % and applies it by rotating every mode's pole by $\omega(\mathrm{ratio} - 1)$, so the whole stiff-string spectrum shifts while every decay rate stays the same. The tests require overlay to leave the pitch exactly alone and fuse to bend it by more than 3 cents rms.
 - **Beyond the spec:** loud notes also start slightly sharp and settle, a tension-modulation glide of $1 + 0.0011\, v^2 e^{-t/70\,\mathrm{ms}}$ (up to +1.9 cents).
 
-#### Gusting band-pass and swell
+#### Fuse: wind timbre
 
 $$
-w_n = \frac{1 + E \big/ \sqrt{1 + Q^2 (r_n - 1/r_n)^2}}{1 + 0.3E}, \qquad r_n = \frac{f_n}{f_\mathrm{bp}}, \qquad
-f_\mathrm{bp} = 4 f_0 \cdot 2^{\,1.2\, s\, (0.55\,\ell + 0.45\, G)}
+w_n = \frac{1 + E \big/ \sqrt{1 + Q^2 (r_n - 1/r_n)^2}}{1 + 0.3E}\cdot \Bigl(\frac{f_n}{f_1}\Bigr)^{\tau}, \qquad r_n = \frac{f_n}{f_\mathrm{bp}}, \qquad
+f_\mathrm{bp} = 4 f_1 \cdot 2^{\,1.2\, s\, (0.55\,\ell + 0.45\, G)}, \qquad \tau = 1.5\cdot \mathrm{timbre}\cdot\varphi_w \ln\frac{U_\mathrm{key}}{\bar U}
 $$
 
-A gentle resonance sweeps across the partials and swells with the gusts. It blends the voice's own LFO $\ell$ with the storm gust $G$, so sustained harmonies and the rain breathe together.
+Gusts brighten the note (positive tilt $\tau$), lulls darken it, and a gentle resonance sweeps across the partials and swells with the gusts, blending the key's own LFO $\ell$ with the storm gust $G$.
 
-- **Code:** `PianoVoice::controlTick()` and `PianoVoice::updateFilterWeights()`. The constants are:
-  - Q = 1.6.
-  - Strength $s = \min(\sigma_u/4, 1.5)$.
-  - Emphasis $E = 1.4 \cdot$ `wind_filter` $\cdot \min(s, 1) \cdot (0.6 + 0.4 \cdot \text{gust factor})$.
-  - $f_\mathrm{bp}$ is clamped to the range 60 Hz to 0.4 fs.
-  - Amplitude swell is $1 + 0.15 \cdot$ `wind_filter` $\cdot \min(s, 1) \cdot \mathrm{clamp}(0.55\ell + 0.45G, \pm 1.5)$.
-- **Approximation:** the band-pass is not a time-domain filter. It is a set of per-mode output weights $w_n$ in the modal sum, so it adds no latency and no filter state. The weights are recomputed only when the centre moves more than 0.4 % or the emphasis changes by more than 0.01.
+- **Code:** `PianoVoice::controlTick()` and `PianoVoice::updateWeights()`. Q = 1.6; strength $s = \varphi_w \min(I U/4, 1.5)$; emphasis $E = 1.4 \cdot$ `wind_timbre` $\cdot \min(s, 1) \cdot (0.6 + 0.4 g)$; tilt clamped to ±0.6; amplitude swell $1 + 0.15 \cdot$ `wind_timbre` $\cdot \min(s, 1) \cdot \mathrm{clamp}(0.55\ell + 0.45G, \pm 1.5)$.
+- **Approximation:** the band-pass is not a time-domain filter but a set of per-mode output weights in the modal sum: no latency and no filter state. A re-struck string keeps its current weighting, so re-strikes do not click.
 
 #### Aeolian wires and wind roar (beyond the spec)
 
@@ -235,7 +269,7 @@ $$
 f_\mathrm{wire} = \frac{St\, U(t)}{D_\mathrm{wire}}, \qquad D_\mathrm{wire} \in \{2.5,\ 4.0,\ 6.5\}\ \mathrm{mm}
 $$
 
-This is the audible wind (`wind_air`), in `WindAir.h`.
+This is the **overlay** wind, in `WindAir.h`. Its level is `wind_air` × $\cos(b\pi/2)$ of `wind_blend`.
 
 - **Wires:** three wires whistle at 800, 500 and 308 Hz at 10 m/s, and their pitch glides with the gusts. Each whistle is noise through a band-pass with Q = 28, normalised to unit variance. Vortex shedding only locks into a clean tone above a few m/s, so the whistles fade in linearly between 3 and 10 m/s.
 - **Roar:** decorrelated low-passed noise at $90 + 22U$ Hz (left) and $95 + 23U$ Hz (right). Its gain follows the dynamic pressure, $\propto \min(U/20, 1.6)^2$.
@@ -250,19 +284,18 @@ $$
 
 $V$ = 127 is overhead (0 m) and $V$ = 1 is at `storm_distance` ($x_\mathrm{max}$, 1200 m by default). **Code:** `atmos::velocityToDistance()`, called from `PianoVoice::strike()`.
 
-#### The initial crack
+#### The strike: crack and multipath in the hammer-string contact
 
 $$
-S_\mathrm{strike}(t) = A\, e^{-t/\tau}\, n(t)
+F(t) = \Bigl[\underbrace{F_\mathrm{felt}(t)}_{\text{gamma pulse}} + \underbrace{A\, e^{-t/\tau}\, n(t)}_{\text{crack}}\Bigr] * h(t), \qquad
+h(t) = \sum_{k=0}^{K-1} g_k\, \mathrm{LP}_k\, \delta(t - t_k)
 $$
 
-**Code:** `PianoVoice::strike()` and `PianoVoice::tickTransient()`.
+Thunder is not a separate sound. The lightning impulse is the hammer, and everything the spec describes for the strike happens in the force the string receives (`PianoVoice::buildForce()`):
 
-- $n(t)$ is unit-variance white noise, high-passed at 40 Hz.
-- $A = 1.1 \cdot$ `crack_level` $\cdot\, v$, where $v = V/127$, scaled by 0.75 under the soft pedal.
-- $\tau$ runs from 14 ms at A0 to 5 ms at C8.
-
-**Beyond the spec:** a soundboard knock is added to the crack. It is a decaying sinusoid at 70 to 160 Hz with τ from 35 to 17.5 ms and amplitude $0.8 \cdot$ `crack_level` $\cdot\, v$. Both parts go through the absorption filter below, and they start after the same random hammer delay (jitter) as the string.
+- **Crack:** $n(t)$ is unit-variance white noise and $\tau$ runs from 10 ms at A0 to 4 ms at C8. $A = 0.35 \cdot$ `crack_level` $\cdot\, v^{2.5} / \sqrt{\tau f_s/2}$, so harder strikes crack disproportionately more and the crack sits about 10 dB under the felt pulse's low-frequency content at full velocity. It is heard only through the string: the tests check that 99 % of a crack-only strike's energy lies on the string's partials.
+- **Multipath:** the felt pulse returns from the near termination after one round trip, $t_\mathrm{rt} = \beta / f_1$, and re-contacts the hammer. With depth $\mu = d\,\cdot$ `rumble_mix`, $K = 1 + \mathrm{round}(7\mu)$ contacts are spaced by $(t_\mathrm{rt} + 4\ \mathrm{ms}\cdot\mu)\times U(0.6, 1.4)$ (the time-varying delay distribution, re-drawn every strike, capped at 40 ms), with gains falling by $0.55 + 0.3\mu$ per contact, normalised to unit sum, and each later contact darker (one-pole at $6 f_h/(1 + 0.9k)$). A close strike is one localised contact; a distant one rolls: the tests measure 1 contact over 1.3 ms at $V$ = 127 and 5 contacts over 37 ms at $V$ = 25.
+- **Knock:** the only part heard directly is a soundboard knock, a decaying sinusoid at 70 to 160 Hz with τ from 35 to 17.5 ms and amplitude $0.5 \cdot$ `crack_level` $\cdot\, v$, starting with the hammer's 0 to 1 ms jitter.
 
 #### Atmospheric absorption
 
@@ -270,28 +303,18 @@ $$
 P(f, x) = P_0(f)\, e^{-\alpha(f)\, x}, \qquad \alpha(f) = \alpha_{1k} \left(\frac{f}{1\ \mathrm{kHz}}\right)^2, \qquad \alpha_{1k} = 4.6\times10^{-4}\ \mathrm{Np/m} \approx 4\ \mathrm{dB/km}
 $$
 
-**Code:** `atmos::absorptionCoefficient()` and `atmos::absorptionGain()`. The crack does not use the exact curve. It uses a cascade of $N = 4$ one-pole low-passes, all at the same cutoff:
+Absorption is applied **exactly, partial by partial**: every mode's drive is weighted by $e^{-\alpha(f_n)\, x\, a}$, where $a$ is `air_absorption`. Because the whole strike (felt pulse, crack and multipath) drives the modes through those weights, a distant strike reaches the string darker, so the cutoff falls as distance grows.
 
-$$
-\lvert H(f) \rvert^2 = \left[1 + (f/f_c)^2\right]^{-N} \ \Rightarrow\ \ln\lvert H\rvert \approx -\frac{N}{2}\left(\frac{f}{f_c}\right)^2
-\quad\Longrightarrow\quad f_c = 1\ \mathrm{kHz}\sqrt{\frac{N}{2\,\alpha_{1k}\, x}}
-$$
+- **Code:** `atmos::absorptionGain()` in `PianoVoice::strike()`.
+- **Sound:** in the tests ($x_\mathrm{max}$ = 1500 m, `air_absorption` 0.4), the spectral centroid of the first 43 ms falls from about 2.4 kHz at $V$ = 127 to 0.7 kHz at $V$ = 80 and 0.4 kHz at $V$ = 30.
+- **Still available:** `atmos::absorptionCascadeCutoff()` gives the cutoff of a 4-pole cascade matched to the Gaussian, $f_c = 1\ \mathrm{kHz}\sqrt{N/(2\alpha_{1k}x)}$, for any time-domain use; the engine no longer needs it.
 
-- **Code:** `atmos::absorptionCascadeCutoff()` computes $f_c$, and `PianoVoice::Transient::absorb[4]` holds the four filters.
-- **Sound:** $f_c$ is 6.6 kHz at 100 m, 2.7 kHz at 600 m, 1.9 kHz at 1200 m and 1.04 kHz at 4 km. At $V$ = 127 the filter is bypassed. In the tests, the spectral centroid of the first 43 ms falls from 1205 Hz at $V$ = 127 to 650 Hz at $V$ = 80 and 308 Hz at $V$ = 30, with $x_\mathrm{max}$ = 1500 m.
-- **Approximation:** below $f_c$ the cascade tracks the Gaussian to within 1 dB (tested at 200, 500 and 1000 Hz at 800 m). Above $f_c$ it falls at only 24 dB/octave, while true absorption falls off a cliff, so a distant crack keeps slightly more top end than physics allows. The pure $f^2$ law is the spec's classical simplification; real air also has molecular-relaxation terms.
-- **Beyond the spec:** the same $e^{-\alpha(f_n)\, x \cdot a}$ weighting is applied to every string partial's excitation, where $a$ is `air_absorption`. Distant strikes are therefore darker in tone, not only in their transient. The crack always gets the full distance.
+#### Decay and wet mix vs. velocity
 
-#### The rumble: multipath propagation
+The spec asks for decay time and wet mix to grow as velocity falls. In the string, a distant strike leaves a louder, longer aftersound: the aftersound mode's level is multiplied by $1 + 0.5d$ and its decay rate by $1 - 0.3d$. In the body, the strings drive `MultipathRumble`, the instrument's resonant surroundings: each voice's output is sent to three distance zones. In each zone:
 
-$$
-R(t) = \int_0^\infty S(t - \tau)\, h(\tau, t)\, d\tau
-$$
-
-**Code:** `MultipathRumble`. Each voice's output (after `piano_level`) is sent to three distance zones. In each zone, $h$ is built from two parts:
-
-- **Early paths:** 12 taps. The arrivals bunch early and then thin out: positions are $p^{1.5}$ across the spread, and gains are $\propto e^{-2.5p}$ with alternating sign, normalised by energy. Each tap is low-passed from the zone tone down to 0.4 × tone, so longer paths are darker. Each tap also "rolls": its delay and gain drift with its own Kolmogorov noise, whose corner is scaled by $0.7 + 0.3 \times$ the gust factor. This makes $h$ time-varying, as the spec asks.
-- **Diffuse tail:** an 8-line feedback delay network. The mixing matrix is Householder, $I - \tfrac{2}{8}\mathbf{1}\mathbf{1}^T$. The base line lengths are 1427 to 2903 samples, scaled by the zone size and by fs/48 kHz. Each line is damped by a one-pole low-pass at 1.4 × tone. Each line's feedback gain is $g = 10^{-3L/(f_s T_{60})}$.
+- **Early paths:** 12 taps. The arrivals bunch early and then thin out: positions are $p^{1.5}$ across the spread, and gains are $\propto e^{-2.5p}$ with alternating sign, normalised by energy. Each tap is low-passed from the zone tone down to 0.4 × tone, so longer paths are darker. Each tap also "rolls": its delay and gain drift with its own Kolmogorov noise, whose corner is scaled by $0.7 + 0.3 \times$ the gust factor.
+- **Diffuse tail:** an 8-line feedback delay network. The mixing matrix is Householder, $I - \tfrac{2}{8}\mathbf{1}\mathbf{1}^T$. The base line lengths are 1427 to 2903 samples, scaled by the zone size and by fs/48 kHz. Each line is damped by a one-pole low-pass at 1.4 × tone, with feedback gain $g = 10^{-3L/(f_s T_{60})}$.
 
 | Zone | Pre-delay | Spread | Tone | FDN size | Roll depth | Roll corner | RT60 ($T$ = `rumble_decay`) | Output trim |
 |------|-----------|--------|------|----------|------------|-------------|-----------------------------|-------------|
@@ -299,16 +322,12 @@ $$
 | mid  | 18 ms | 140 ms | 3.2 kHz | 0.70 | 2.0 ms | 0.25 Hz | 0.45 T | 1.5 |
 | far  | 45 ms | 420 ms | 1.4 kHz | 1.15 | 6.0 ms | 0.12 Hz | T | 2.8 |
 
-The send law (`PetrichorEngine::renderBlock()` and `MultipathRumble::zoneWeights()`) makes the wet level and the decay time both grow as velocity falls:
-
 $$
 \mathrm{send} = \mathrm{mix}\,(0.12 + 0.88\, d), \qquad
 (w_\mathrm{near}, w_\mathrm{mid}, w_\mathrm{far}) \propto \bigl(\max(0, 1 - 2d),\ 1 - \lvert 2d - 1 \rvert,\ \max(0, 2d - 1)\bigr), \quad \textstyle\sum w^2 = 1
 $$
 
-A strike at $V$ = 127 excites only the short, bright near zone, at 12 % of `rumble_mix`. A strike at $V$ = 1 sends all of `rumble_mix` into the long, dark, rolling far zone. In the tests, a C3 is held for 0.25 s and the energy from 1 to 3 s is compared with the energy of those first 0.25 s. The ratio is below 10⁻⁴ at $V$ = 120 and 0.11 at $V$ = 30.
-
-**Approximation:** $h$ is not a literal convolution kernel. The taps model the discrete early arrivals, and the FDN is a recursive (IIR) approximation of the dense, exponentially decaying multipath tail.
+A strike at $V$ = 127 excites only the short, bright near zone, at 12 % of `rumble_mix`; a strike at $V$ = 1 sends all of it into the long, dark, rolling far zone. In the tests, the energy from 1 to 3 s after a C3 held for 0.25 s is below 10⁻⁴ of the direct energy at $V$ = 120 and about 0.09 at $V$ = 30.
 
 ### The piano (beyond the spec)
 
@@ -381,15 +400,17 @@ A harder strike compresses the felt for less time, so it sounds brighter. The pu
 
 | Spec | Implementation |
 |------|----------------|
-| Hammer = lightning impulse $\delta(t)$ | A separate crack $A e^{-t/\tau} n(t)$ plus a soundboard knock; the string is driven by a gamma-shaped felt pulse with 0 to 1 ms jitter |
-| Transient through a distance-dependent low-pass | A 4-pole cascade matched to the $e^{-\alpha f^2 x}$ Gaussian at low frequencies; the same law is also applied to string partials (`air_absorption`) |
-| Multi-tap delay or convolution $h(t)$ | 3 distance zones, each with 12 rolling taps and an 8-line FDN; decay and wet mix both follow velocity |
+| Hammer = lightning impulse $\delta(t)$ | The hammer *is* the lightning: a gamma felt pulse plus the crack $A e^{-t/\tau} n(t)$, convolved with a multipath train, drives the string; only a soundboard knock is heard directly |
+| Transient through a distance-dependent low-pass | Exact $e^{-\alpha(f_n) x}$ weighting of every partial's excitation |
+| Multi-tap delay or convolution $h(t)$; decay and wet mix vs. velocity | In the contact: up to 8 rolling re-contacts for distant strikes. In the string: louder, longer aftersound. In the body: 3 zones of rolling taps + FDN with distance-dependent sends |
 | fBm spatial gust field | Temporal −5/3 noise (fBm with H = 1/3), with independent realisations per voice and per tap instead of a spatial field |
 | Kolmogorov −5/3 LFO | Pole/zero cascade, time-warped so the Strouhal corner moves without changing the spectrum's shape |
 | Strouhal LFO from the note | $L = c/f_0$ (the note's wavelength); $U$ is the instantaneous gusting speed |
-| Resonant band-pass sweep | Per-mode weights in the modal sum, plus an amplitude swell |
+| Micro-pitch vibrato | Fuse: the note's pitch follows the local wind like an Aeolian tone, $(U_\mathrm{key}/\bar U)^\delta$; overlay leaves it alone |
+| Resonant band-pass sweep | Per-mode weights in the modal sum, plus a gust brightness tilt and swell |
+| Granular rain layer over the sustain | Overlay: grains + hiss that follow the wind and the piano. Fuse: drops on strings, hiss in the modes, patter modulation |
 | Rain density from $N(D)$ | Drop flux $\int N v_T\, dD$ × 0.015 m² as a Poisson rate; flux-weighted diameters |
-| Rain linked to wind LFO amplitude | $R = R_0 (1 + I G)^{3c}$, from the storm-wide gust factor |
+| Rain linked to wind LFO amplitude | $R = R_0 (1 + \min(\bar U/8, 1)(g - 1))^{3c}$, from the storm-wide gust factor |
 | Brighter rain in gusts | Grain centre $700\,\lvert\mathbf v\rvert^{0.75}$ Hz from the vector impact speed; hiss bandwidth follows the mean impact speed |
 | (not in spec) | Modal stiff-string piano, Minnaert bubbles, Aeolian wire whistles, wind roar, tension glide, energy-based voice stealing |
 
@@ -407,15 +428,16 @@ All MIDI channels are treated alike. MIDI is handled in `PluginProcessor::handle
 | Repeated note-on of a sounding key | `noteOn()` | Re-strikes the same voice, adding to its motion. |
 | **CC64** sustain (≥ 64 = down) | `setSustainPedal()` | Dampers stay up; on release, every voice whose key is no longer held is damped. |
 | **CC67** soft pedal (≥ 64 = down) | `setSoftPedal()` | Una corda, for notes struck while it is down: hardness −0.25, impulse ×0.75, aftersound level 0.5 instead of 0.32. |
-| **CC120** All Sound Off | `allSoundOff()` | Instant silence: resets every voice, clears the rumble buffers and releases the sustain pedal. |
-| **CC123** All Notes Off, **CC121** Reset All Controllers | `allNotesOff()` | Releases the sustain pedal, drops queued notes and damps every voice. Undamped treble strings still ring out. |
+| **CC120** All Sound Off | `allSoundOff()` | Instant silence: silences every voice, clears the rumble buffers and releases both pedals. |
+| **CC123** All Notes Off | `allNotesOff()` | Releases both pedals, drops queued notes and damps every voice. Undamped treble strings still ring out. |
+| **CC121** Reset All Controllers | `setSustainPedal(false)`, `setSoftPedal(false)` | Releases the pedals. Keys still held keep sounding. |
 | Pitch bend, mod wheel, aftertouch, other CCs | none | Ignored. |
 
 ---
 
 ## Parameters
 
-All 22 parameters are defined in `Source/Plugin/Parameters.h`, which is the single source of truth. Each one is an automatable `AudioParameterFloat` with `ParameterID{id, 1}`, mapped by member pointer onto `EngineParams` in physical units. Where the "Skew centre" column has a value, that value sits at the knob's midpoint (`setSkewForCentre`). Unitless 0 to 1 controls are displayed as percentages.
+All 25 parameters are defined in `Source/Plugin/Parameters.h`, which is the single source of truth. Each one is an automatable `AudioParameterFloat` with `ParameterID{id, 1}`, mapped by member pointer onto `EngineParams` in physical units. Where the "Skew centre" column has a value, that value sits at the knob's midpoint (`setSkewForCentre`). Unitless 0 to 1 controls are displayed as percentages.
 
 | id | Name | Range | Default | Skew centre | What it does physically |
 |----|------|-------|---------|-------------|-------------------------|
@@ -423,24 +445,27 @@ All 22 parameters are defined in `Source/Plugin/Parameters.h`, which is the sing
 | `sustain` | Sustain | 0.3 – 3 × | 1.0 | 1.0 | Multiplies every string T60 by dividing $\sigma_1$ and $b_3$. |
 | `unison` | String Detune | 0 – 4 ct | 1.2 | | Detune between the prompt and aftersound modes of each partial, which causes unison beating. |
 | `stereo_width` | Stereo Width | 0 – 1 | 0.7 | | Keyboard pan spread, bass left and treble right, up to ±0.85. |
-| `piano_level` | Piano Level | −24 – +6 dB | 0 | 0 | Gain of the string bus. Rumble sends are taken after it. |
+| `piano_level` | Piano Level | −24 – +6 dB | 0 | | Gain of the string bus. Rumble sends are taken after it. |
 | `tuning` | Tuning A4 | 415 – 466 Hz | 440 | | Reference pitch, before stretch tuning. |
 | `storm_distance` | Storm Distance | 50 – 4000 m | 1200 | 800 | $x_\mathrm{max}$: the distance of a velocity-1 strike. Velocity 127 is always overhead. |
-| `crack_level` | Crack | 0 – 1 | 0.5 | | Amplitude $A$ of the lightning transient (noise burst plus soundboard knock). |
-| `air_absorption` | Air Absorption | 0 – 1 | 0.4 | | Fraction of the strike distance applied to the string partials as $e^{-\alpha(f_n)x}$. The crack is always fully absorbed. |
-| `rumble_mix` | Rumble | 0 – 1 | 0.35 | | Scales the per-voice send $0.12 + 0.88d$ into the multipath zones. |
+| `crack_level` | Crack | 0 – 1 | 0.5 | | Amplitude $A$ of the crack in the hammer's force (heard through the string) and of the soundboard knock. |
+| `air_absorption` | Air Absorption | 0 – 1 | 0.5 | | Fraction $a$ of the strike distance applied to every partial's excitation as $e^{-\alpha(f_n)xa}$. |
+| `rumble_mix` | Rumble | 0 – 1 | 0.35 | | Multipath depth of distant strikes' contact ($\mu = d \cdot$ value) and the per-voice send $0.12 + 0.88d$ into the body-rumble zones. |
 | `rumble_decay` | Rumble Decay | 0.5 – 12 s | 5.0 | 4.0 | RT60 of the far zone (mid 0.45×, near max(0.25 s, 0.15×)). The plug-in reports a tail of 12 s plus this value. |
 | `wind_speed` | Wind Speed | 0 – 30 m/s | 8.0 | 8.0 | Mean wind $\bar U$, which glides with a 0.35 s time constant. |
 | `turbulence` | Turbulence | 0 – 1 | 0.35 | | Turbulence intensity $I = \sigma_u/\bar U = 0.6 \times$ value. |
 | `gust_length` | Gust Length | 2 – 100 m | 12 | 15 | Integral length scale $L_u$. The gust corner is $\bar U/(8.41 L_u)$, so longer means slower gusts. |
-| `wind_drift` | Doppler Drift | 0 – 1 | 0.35 | | Depth of the Doppler micro-pitch: $u_\mathrm{los} = 0.5 \cdot \mathrm{drift} \cdot \sigma_u \cdot \ell(t)$. |
-| `wind_filter` | Gust Filter | 0 – 1 | 0.4 | | Depth of the gusting band-pass emphasis and of the ±15 % amplitude swell. |
-| `wind_air` | Wind Air | 0 – 1 | 0.15 | | Level of the audible wind: roar $\propto U^2$ and Aeolian wire whistles. |
+| `wind_blend` | Wind Overlay/Fuse | 0 – 1 | 0.7 | | Equal-power blend: overlay (audible wind layer) ↔ fuse (wind inside the notes). |
+| `wind_pitch` | Wind Pitch | 0 – 1 | 0.35 | | Fuse: depth of the Aeolian pitch law, $\delta = 0.06 \cdot$ value $\cdot \varphi_w \cdot \min(\bar U/8, 2)$. |
+| `wind_timbre` | Wind Timbre | 0 – 1 | 0.4 | | Fuse: gust brightness tilt, band-pass emphasis and the ±15 % swell. |
+| `wind_air` | Air Level | 0 – 1 | 0.3 | | Overlay: level of the audible wind, roar $\propto U^2$ and Aeolian wire whistles. |
 | `rain_rate` | Rain Rate | 0 – 150 mm/h | 8.0 | 15 | $R_0$, the rainfall rate at the mean wind speed. |
-| `rain_coupling` | Wind Coupling | 0 – 1 | 0.6 | | $c$ in $R = R_0(1 + IG)^{3c}$: how strongly rain follows the gusts. |
-| `rain_level` | Rain Level | 0 – 1 | 0.35 | | Rain bus gain, $0.9\,\ell^{1.5}$. At 0, no drops are generated. |
-| `rain_surface` | Puddles | 0 – 1 | 0.3 | | Ground type, from 0 (leaves and soil) to 1 (standing water). Sets the probability and level of Minnaert bubbles. |
-| `master` | Master | −24 – +6 dB | −2.0 | 0 | Output gain ahead of the soft-knee limiter. |
+| `rain_coupling` | Wind Coupling | 0 – 1 | 0.6 | | $c$ in $R = R_0(1 + \min(\bar U/8,1)(g-1))^{3c}$: how strongly rain follows the gusts. |
+| `rain_level` | Rain Level | 0 – 1 | 0.35 | | Texture amount $\ell$ in both modes: overlay gain $0.9\,\ell^{1.5}$, fused drop power, hiss and patter depth. At 0, no drops are generated. |
+| `rain_surface` | Puddles | 0 – 1 | 0.3 | | Ground type, from 0 (leaves and soil) to 1 (standing water). Sets the probability and level of Minnaert bubbles (overlay). |
+| `rain_blend` | Rain Overlay/Fuse | 0 – 1 | 0.5 | | Equal-power blend: overlay (rain layer beside the piano) ↔ fuse (rain inside the notes). |
+| `rain_follow` | Piano Follow | 0 – 1 | 0.6 | | Overlay: how much the rain layer follows the piano's envelope and spectral centre. |
+| `master` | Master | −24 – +6 dB | −2.0 | | Output gain ahead of the soft-knee limiter. |
 
 ---
 
@@ -466,7 +491,7 @@ sudo apt install build-essential cmake git pkg-config \
 
 The project sets `JUCE_USE_CURL=0`, so `libcurl4-openssl-dev` is optional. On older distributions, `libwebkit2gtk-4.0-dev` also works.
 
-**Windows and WebView2:** `PETRICHOR_USE_WEBVIEW2` defaults to `ON`. It statically links the WebView2 loader (`NEEDS_WEBVIEW2` and `JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1`), so CMake must be able to find the NuGet package. JUCE's `FindWebView2.cmake` suggests installing it from PowerShell:
+**Windows and WebView2:** Windows builds always use WebView2, because the editor serves its page through the web view's resource provider, which only the WebView2 backend supports. The build statically links the WebView2 loader (`NEEDS_WEBVIEW2` and `JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1`), so CMake must be able to find the NuGet package. JUCE's `FindWebView2.cmake` suggests installing it from PowerShell:
 
 ```powershell
 Register-PackageSource -provider NuGet -name nugetRepository -location https://www.nuget.org/api/v2
@@ -474,8 +499,6 @@ Install-Package Microsoft.Web.WebView2 -Scope CurrentUser -RequiredVersion 1.0.1
 ```
 
 If the package is installed somewhere else, point JUCE at it with `-DJUCE_WEBVIEW2_PACKAGE_LOCATION=<dir>`.
-
-To build without the SDK, configure with `-DPETRICHOR_USE_WEBVIEW2=OFF`. JUCE then falls back to its legacy Internet Explorer backend, which cannot run the UI bundle. Only use this for CI or headless builds.
 
 End users need the Edge WebView2 Runtime, which ships with Windows 11 and current Windows 10. On every OS, the editor uses the system web view: WebView2 on Windows, WKWebView on macOS and WebKitGTK on Linux.
 
@@ -489,7 +512,7 @@ cmake --build build-engine --parallel
 ctest --test-dir build-engine --output-on-failure   # or: ./build-engine/PetrichorTests
 
 mkdir -p renders
-./build-engine/PetrichorRender renders               # writes 4 demo WAVs (24-bit, 48 kHz, stereo)
+./build-engine/PetrichorRender renders               # writes 5 demo WAVs (24-bit, 48 kHz, stereo)
 ./build-engine/PetrichorRender --calibrate           # per-key loudness table
 ```
 
@@ -498,13 +521,14 @@ mkdir -p renders
 | File | What you hear |
 |------|---------------|
 | `01_velocity_is_distance.wav` | The same D-minor chord at V = 127, 100, 72, 44 and 18: from an overhead crack to a distant roll |
-| `02_wind_sustain.wav` | A 30 s pedalled chord while the wind rises from 3 to 20 m/s; strongly coupled rain breathes with the gusts |
-| `03_storm_prelude.wav` | A short D-minor prelude as the storm builds (wind 4 → 16 m/s, rain 3 → 28 mm/h), with a fortissimo strike and distant rumbles in the coda |
-| `04_dry_piano.wav` | The bare instrument: A0 to A7 at V = 90, then a C chord at V = 20 to 120 |
+| `02_wind_overlay_to_fuse.wav` | Held chords in a gusty 14 m/s wind while `wind_blend` sweeps from overlay (the wind's roar and whistles, 0–8 s) to fuse (the notes themselves bend and brighten, from about 24 s) |
+| `03_rain_overlay_to_fuse.wav` | A slow phrase while `rain_blend` sweeps from an overlay rain layer that follows the piano (0–8 s) to rain that only exists inside the notes (from about 24 s) |
+| `04_storm_prelude.wav` | A short D-minor prelude as the storm builds (wind 4 → 16 m/s, rain 3 → 28 mm/h), with a fortissimo strike and distant rumbles in the coda |
+| `05_dry_piano.wav` | The bare instrument: A0 to A7 at V = 90, then a C chord at V = 20 to 120 |
 
 `--calibrate` strikes every third key from A0 to C8 at V = 80, with all weather off. It prints the RMS level of the first 0.5 s, after a 100 Hz high-pass. Use it after any change that affects level, and keep the curve flat.
 
-The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 34 checks in 12 tests:
+The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 44 checks in 15 tests:
 
 - the Marshall-Palmer $\Lambda$ and the flux-weighted sampling,
 - $v_T$ and the vector sum,
@@ -516,6 +540,9 @@ The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 34
 - rumble growing as velocity falls,
 - a treble LFO faster than the bass,
 - gust-coupled rain density and brightness,
+- thunder in the hammer-string contact (one contact when close, a rolling train when distant; the crack heard only through the string),
+- wind overlay leaving pitch alone and wind fuse bending it,
+- overlay rain following the piano, fused rain silent without notes and texturing sustained ones,
 - stability with extreme settings at 96 kHz (finite output, peak ≤ 1),
 - 64 sustained voices with all weather running faster than real time.
 
@@ -531,13 +558,12 @@ What this build does:
 - **JUCE 8.0.9** is fetched with `FetchContent` at configure time, which needs network access. To use a local checkout instead, which is faster and works offline, add `-DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE`. The checkout should be at tag 8.0.9.
 - **The UI** is rebuilt by CMake whenever the frontend sources or configuration change (`frontend/src/**`, `index.html`, `package.json`, `package-lock.json`, or the Vite, Tailwind and PostCSS configs). The rebuild runs `npm ci` (including devDependencies) followed by `npm run build`. If npm is not installed, CMake uses an existing `frontend/dist/index.html`, and fails if there is none.
 - **Formats** are VST3, AU (macOS only) and Standalone. The artefacts go to `build/PetrichorPiano_artefacts/Release/{VST3,AU,Standalone}/`. `COPY_PLUGIN_AFTER_BUILD` is off, so copy `Petrichor Piano.vst3` (or `.component`) into your plug-in folder yourself.
-- **Tests and renderer** are also built in this mode (`PETRICHOR_BUILD_TESTS=ON`). If they get in the way, pass `-DPETRICHOR_BUILD_TESTS=OFF`. For example, `EngineTests.cpp` uses `M_PI`, which MSVC only defines with `_USE_MATH_DEFINES`.
+- **Tests and renderer** are also built in this mode (`PETRICHOR_BUILD_TESTS=ON`). If they get in the way, pass `-DPETRICHOR_BUILD_TESTS=OFF`.
 
 | CMake option | Default | Effect |
 |--------------|---------|--------|
 | `PETRICHOR_ENGINE_ONLY` | `OFF` | Build only the engine, tests and renderer, with no JUCE and no npm |
 | `PETRICHOR_BUILD_TESTS` | `ON` | Build `PetrichorTests` and `PetrichorRender` |
-| `PETRICHOR_USE_WEBVIEW2` | `ON` (Windows only) | Use the Chromium-based WebView2 for the editor |
 | `FETCHCONTENT_SOURCE_DIR_JUCE` | unset | Use a local JUCE checkout instead of fetching one |
 
 The engine is always compiled with `-O3` on GCC and Clang, even in Debug, because the modal bank relies on auto-vectorisation.

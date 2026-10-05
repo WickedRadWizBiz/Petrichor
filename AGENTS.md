@@ -2,9 +2,9 @@
 
 This file is for agents working in this repo. Petrichor Piano is a modal piano inside a physically modelled storm:
 
-- **Velocity is distance:** MIDI velocity sets how far away the lightning strike is.
-- **Wind:** Kolmogorov wind, with each note's Strouhal number setting its tempo, modulates the sustain.
-- **Rain:** a wind-coupled Marshall-Palmer granular rain falls underneath.
+- **Thunder is the hammer strike** (always fused): velocity is distance; the crack, the exact per-partial air absorption and the multipath roll all live in the force the string receives. There is no separate thunder sound.
+- **Wind** has an Overlay ↔ Fuse blend: overlay is the audible wind (roar, Aeolian wires); fuse bends each note's pitch like an Aeolian tone ($f \propto U$) at its Strouhal tempo and tilts its timbre.
+- **Rain** has an Overlay ↔ Fuse blend: overlay is a granular Marshall-Palmer layer that follows the wind and the piano; fuse lands drops on the ringing strings, excites their modes with hiss and modulates the tone with the patter.
 
 The README has the full mathematics, the parameter and MIDI tables, and the build guide. The earlier "Iso-Storm" design (Triad, hygroscopic wood, B×100 thunder, `native.setParameter`) is obsolete. Do not reintroduce it.
 
@@ -12,7 +12,7 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 
 1. **Keep the engine JUCE-free.** Everything audible lives in `Source/DSP/` as plain C++17 and builds with `-DPETRICHOR_ENGINE_ONLY=ON`. Never include JUCE headers there. `Source/Plugin/` is a thin wrapper.
 2. **Keep the engine real-time safe.**
-   - Allocate only in `prepare()`. After that: no allocation, no locks, no I/O, no exceptions on the audio path. Use fixed-size arrays (`kMaxVoices` = 64, `kMaxGrains` = 512, `kMaxPartials` = 96, `kMaxPulse` = 4096).
+   - Allocate only in `prepare()`. After that: no allocation, no locks, no I/O, no exceptions on the audio path. Use fixed-size arrays (`kMaxVoices` = 64, `kMaxGrains` = 512, `kMaxPartials` = 96); the per-voice contact buffers are `std::vector`s sized from the sample rate in `PianoVoice::prepare()`, and the voices themselves live in a heap `std::vector` (each carries its buffers).
    - Seed RNGs deterministically, so a render is bit-identical across runs.
    - Make audio-path functions `noexcept`.
 3. **Route physics through `Source/DSP/Atmosphere.h`.**
@@ -23,7 +23,7 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 5. **Treat `Source/Plugin/Parameters.h` as the single source of truth for parameters.** It defines ids, names, ranges, defaults and skew centres. `frontend/src/params.js` must mirror it exactly. A parameter id is a saved-state and automation key (`ParameterID{id, 1}`), so never rename or reuse one.
 6. **Run the engine tests before committing.** The suite must report `0 failures`.
 7. **Listen and measure with `PetrichorRender`.** Render the demos before and after any change that affects sound. Renders are deterministic, so you can diff them.
-8. **Keep loudness calibrated.** After any change that affects level, run `PetrichorRender --calibrate`. The current per-key profile at V = 80 is about −31 ± 1 dB from A0 to A5, sloping to about −34 dB at C8. The trim lives in `keyLoudnessTrim()` in `PianoVoice.cpp`. The master stage has a soft knee above 0.8, and the stability test requires peak ≤ 1.0.
+8. **Keep loudness calibrated.** After any change that affects level, run `PetrichorRender --calibrate`. The current per-key profile at V = 80 is flat at about −32 ± 1 dB from A0 to C8. The trim lives in `keyLoudnessTrim()` in `PianoVoice.cpp`. The master stage has a soft knee above 0.8, and the stability test requires peak ≤ 1.0.
 
 ## 2. Engine conventions
 
@@ -36,7 +36,9 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
   3. Wire the field into the engine.
   4. Mirror it in `frontend/src/params.js`.
   5. Add a row to the README parameter table.
-- **Skew gotcha:** `rangeFor()` skews whenever `centre` is strictly inside (min, max). The "linear" sentinel 0.0 therefore *does* skew a range that contains 0. Today that applies to `piano_level` and `master`, which are centred on 0 dB.
+- **Skew:** `rangeFor()` skews whenever `centre` is strictly inside (min, max). Use a centre ≤ min (the dB controls use −100) for a linear range that contains 0.
+- **Overlay ↔ Fuse:** blends are equal-power (`overlayAmount()` / `fuseAmount()` in `PetrichorEngine.cpp`: $\cos$ / $\sin$ of $b\pi/2$). Mode-specific controls carry `mode: "overlay" | "fuse"` in `params.js` and fade in the UI as they become irrelevant.
+- **Fused effects must scale from open-loop references, never from live energy.** Fused rain once scaled by the string's live energy; drops and hiss then fed on their own energy and grew without bound (NaN at extreme settings). It now scales from `PianoVoice::referenceEnergy`, the hammer's analytically expected energy, decaying at the slowest mode rate and with the damper, and drop power is normalised by drop rate. Keep any new fused behaviour open-loop in the same way.
 - **Adding telemetry:**
   1. Add the field to `EngineTelemetry`.
   2. Add an atomic to `TelemetrySnapshot` and store it in `publishTelemetry()`.
@@ -54,19 +56,21 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 | Advection | $v=\sqrt{v_T^2+U^2}$, $\sin\theta=U/v$ | used for grain pitch and pan | `atmos::impactSpeed`, `slantSine` |
 | Drop flux → grains | $F=\int N v_T\,dD$, rate $=F\,A_c$ | Simpson's rule, 32 intervals; $A_c$ 0.015 m²; Poisson arrivals | `atmos::dropNumberFlux`, `RainTexture::controlTick/render` |
 | Landing diameter | $p(D)\propto N(D)v_T(D)$ | inverse CDF plus rejection on $v_T/9.3$ | `atmos::sampleImpactDiameter` |
-| Rain–wind coupling | $R=R_0(1+IG)^{3c}$ | smoothed, τ 0.25 s | `RainTexture::controlTick` |
+| Rain–wind coupling | $R=R_0(1+\min(\bar U/8,1)(g-1))^{3c}$ | smoothed, τ 0.25 s | `RainTexture::controlTick` |
+| Rain overlay follow | $F=(1-\phi)+\phi\min(e,1.5)$; spectra lean to $f_\mathrm{piano}$ by $0.5\phi\min(e,1)$ | e = piano RMS / 0.04 (10/300 ms) | `PetrichorEngine::controlTick`, `RainTexture` |
+| Rain fuse | drops: $a=s_d\sqrt{P/\lambda_g}$, $P=2\varphi\ell\min(\rho,2)$; hiss $h=0.3\varphi\ell\min(\rho,2)$; patter AM $1+1.5\varphi\ell p$ (0.3–1.7) | all × open-loop $E_\mathrm{ref}$ | `landDrops`, `PianoVoice::rainDrop/controlTick`, `renderBlock` |
 | Grain | $f_c=700v^{0.75}$, $A\propto[(D/2)^{1.5}v/6.5]^{0.7}$, $\tau$=0.4+1.6D ms | band-pass Q 1.3, centre ×0.8 to ×1.2 | `RainTexture::spawnGrain` |
 | Minnaert bubble | $f=3.26/a$ | a = 0.25 to 0.6 D; P = surface × (0.45 if D > 1 mm, else 0.1) | `atmos::minnaertFrequency` |
 | Kolmogorov noise | $\lvert H\rvert^2\propto f^{-5/3}$ above $f_c$ | 3 pole/zero pairs plus a pole at 12 fc; 128 steps per corner-Hz; time-warped and Hermite-interpolated | `KolmogorovNoise` |
 | Storm gusts | $U(t)=\bar U(1+IG)$, corner $\bar U/(8.41L_u)$ | I = 0.6 × turbulence; mean glide τ 0.35 s | `atmos::vonKarmanCornerHz`, `StormWind::tick` |
 | Note LFO (Strouhal) | $f=St\,U/L$, $L=c/f_0$ | St 0.2, c 343 m/s, clamped 0.02 to 16 Hz | `atmos::strouhalFrequency`, `noteObstacleLength`, `PianoVoice::controlTick` |
-| Doppler drift | $f'/f=c/(c-u_{los})$, $u_{los}=0.5\,\mathrm{drift}\,\sigma_u\,\ell$ | σu = I·U; ±60 m/s; total ±3 % | `atmos::dopplerRatio`, `PianoVoice::applyPitchRatio` |
-| Gust band-pass | per-mode weight, Q 1.6, centre $4f_0\,2^{1.2s(0.55\ell+0.45G)}$ | ±15 % swell | `PianoVoice::updateFilterWeights` |
+| Wind pitch (fuse) | $f'/f=(U_\mathrm{key}/\bar U)^\delta$, $U_\mathrm{key}=\bar U g(1+I\ell)$ | $\delta=0.06\,\mathrm{pitch}\,\varphi_w\min(\bar U/8,2)$; total ±3 % | `PianoVoice::controlTick`, `applyPitchRatio` |
+| Wind timbre (fuse) | per-mode weight, Q 1.6, centre $4f_1\,2^{1.2s(0.55\ell+0.45G)}$, tilt $(f/f_1)^{1.5\,\mathrm{timbre}\,\varphi_w\ln(U_\mathrm{key}/\bar U)}$ | ±15 % swell; tilt ±0.6 | `PianoVoice::updateWeights` |
 | Aeolian wires | $f=St\,U/D_w$ | Dw 2.5, 4.0, 6.5 mm; Q 28; fade-in from 3 to 10 m/s | `WindAir` |
 | Velocity → distance | $x=x_{max}(127-V)/126$ | $x_{max}$ = `storm_distance` | `atmos::velocityToDistance` |
-| Crack | $S=Ae^{-t/\tau}n(t)$ | τ 14 → 5 ms; 40 Hz high-pass; plus a 70 to 160 Hz knock | `PianoVoice::strike/tickTransient` |
-| Absorption | $e^{-\alpha(f)x}$, $\alpha=\alpha_{1k}(f/1k)^2$ | α1k = 4.6e-4 Np/m | `atmos::absorptionGain` |
-| Absorption cascade | $f_c=1\,\mathrm{kHz}\sqrt{N/(2\alpha_{1k}x)}$ | N = 4 one-poles | `atmos::absorptionCascadeCutoff` |
+| Crack (in the force) | $S=Ae^{-t/\tau}n(t)$, $A=0.35\,\mathrm{crack}\,v^{2.5}/\sqrt{\tau f_s/2}$ | τ 10 → 4 ms; only a 70–160 Hz knock is heard directly | `PianoVoice::buildForce` |
+| Multipath contact | $F=(F_\mathrm{felt}+S)*\sum_k g_k\mathrm{LP}_k\delta(t-t_k)$ | $K=1+\mathrm{round}(7\mu)$, $\mu=d\cdot$rumble; spacing $(\beta/f_1+4\,\mathrm{ms}\,\mu)U(0.6,1.4)$, ≤ 40 ms | `PianoVoice::buildForce` |
+| Absorption | $e^{-\alpha(f_n)xa}$ on every partial's drive, $\alpha=\alpha_{1k}(f/1k)^2$ | α1k = 4.6e-4 Np/m; a = `air_absorption` | `atmos::absorptionGain`, `PianoVoice::strike` |
 | Rumble | $R=\int S(t-\tau)h(\tau,t)d\tau$ | 3 zones × (12 rolling taps + 8-line Householder FDN); RT60 near max(0.25, 0.15T), mid 0.45T, far T | `MultipathRumble` |
 | Rumble send | send $=\mathrm{mix}(0.12+0.88d)$, triangular equal-power zone weights | $d=(127-V)/126$ | `PetrichorEngine::renderBlock`, `MultipathRumble::zoneWeights` |
 | Stiff string | $f_n=nf_0\sqrt{1+Bn^2}$ | B 3e-4 (A0) → 1e-4 (A2) → 8e-3 (C8); Railsback stretch | `PianoVoice::inharmonicity`, `stretchCents` |
@@ -107,7 +111,7 @@ cmake --build build --config Release --parallel
 ```
 
 - **Frontend build:** CMake builds the frontend with `npm ci --include=dev` and `npm run build` when the frontend sources change. `juce_add_binary_data(PetrichorFrontend)` then embeds `frontend/dist/index.html`. Without npm, CMake falls back to an existing `dist/index.html`. `frontend/dist`, `node_modules` and `build*/` are git-ignored.
-- **Windows:** `PETRICHOR_USE_WEBVIEW2=ON` by default, which requires the `Microsoft.Web.WebView2` NuGet package. With it OFF, JUCE uses the legacy IE backend, which cannot run the UI.
+- **Windows:** always uses WebView2 (the editor's resource provider needs it), which requires the `Microsoft.Web.WebView2` NuGet package.
 - **Linux:** needs the JUCE development packages listed in the README, including `libwebkit2gtk-4.1-dev` and `libgtk-3-dev`.
-- **MSVC:** `Tests/EngineTests.cpp` uses `M_PI`, which MSVC only defines with `_USE_MATH_DEFINES`. If the tests do not compile, use `-DPETRICHOR_BUILD_TESTS=OFF` or fix that file.
+- **MSVC:** `Tests/EngineTests.cpp` defines `_USE_MATH_DEFINES` for `M_PI`; keep engine code on `kPi` / `kTwoPi`.
 - **README sync:** whenever you change a constant quoted in the README, update the README as well.
