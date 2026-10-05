@@ -135,30 +135,68 @@ void velocityIsDistance (const std::string& dir)
     renderScore (dir + "/01_velocity_is_distance.wav", s, t + 3.0, p);
 }
 
-// 2. One long chord held through rising, gusty wind; the rain breathes with the gusts.
-void windSustain (const std::string& dir)
+// 2. Wind, Overlay -> Fuse: the same held chords while the blend sweeps from the audible wind
+//    layer (0-8 s) into the notes themselves (pitch bending like an Aeolian tone, timbre sweeping).
+void windOverlayToFuse (const std::string& dir)
 {
     Score s;
-    s.pedal (0.0, true);
-    s.chord (0.5, { 31, 38, 46, 53, 57, 62, 69 }, 70, 1.0, 0.04);
-    s.chord (10.5, { 74, 77, 81 }, 52, 1.0, 0.08);
-    s.chord (19.0, { 72, 76, 79 }, 48, 1.0, 0.08);
-    s.pedal (27.0, false);
+    const double bar = 8.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        const double t = 0.4 + bar * i;
+        if (i > 0) s.pedalChange (t); else s.pedal (0.0, true);
+        s.chord (t, { 38, 45, 53, 57, 62, 69 }, 66, bar, 0.05);
+        s.note (t + 4.0, i % 2 ? 81 : 76, 58, 4.0);
+    }
+    s.pedal (bar * 4 + 0.4, false);
 
     EngineParams p;
     p.sustain = 2.4f;
+    p.windSpeedMs = 14.0f;
     p.turbulence = 0.7f;
-    p.gustLengthM = 5.0f;
-    p.windDrift = 0.55f;
-    p.windFilter = 0.8f;
-    p.windAir = 0.25f;
-    p.rainRateMMh = 12.0f;
-    p.rainCoupling = 0.9f;
-    p.rainLevel = 0.45f;
+    p.gustLengthM = 6.0f;
+    p.windPitch = 0.6f;
+    p.windTimbre = 0.7f;
+    p.windAir = 0.45f;
+    p.rainLevel = 0.0f;
     p.rumbleMix = 0.3f;
 
-    renderScore (dir + "/02_wind_sustain.wav", s, 30.0, p, [] (double t, EngineParams& q) {
-        q.windSpeedMs = (float) (3.0 + 17.0 * std::min (1.0, t / 18.0));
+    renderScore (dir + "/02_wind_overlay_to_fuse.wav", s, bar * 4 + 4.0, p, [bar] (double t, EngineParams& q) {
+        q.windBlend = (float) std::clamp ((t - bar) / (bar * 2.0), 0.0, 1.0);
+    });
+}
+
+// 3. Rain, Overlay -> Fuse: a slow phrase while the blend sweeps from a rain layer that follows
+//    the piano (0-8 s) to rain that only exists inside the notes (from ~24 s).
+void rainOverlayToFuse (const std::string& dir)
+{
+    Score s;
+    const double bar = 4.0;
+    const std::initializer_list<int> chords[4] = { { 45, 52, 60, 64 }, { 41, 48, 57, 60 }, { 43, 50, 59, 62 }, { 40, 47, 55, 59 } };
+    s.pedal (0.0, true);
+    for (int i = 0; i < 8; ++i)
+    {
+        const double t = 0.4 + bar * i;
+        if (i > 0) s.pedalChange (t);
+        s.chord (t, chords[i % 4], 72, bar, 0.04);
+        s.note (t + 2.0, 72 + (i % 3) * 2, 64, 2.0);
+    }
+    s.pedal (bar * 8 + 0.4, false);
+
+    EngineParams p;
+    p.sustain = 1.8f;
+    p.windSpeedMs = 9.0f;
+    p.turbulence = 0.6f;
+    p.windBlend = 1.0f;
+    p.rainRateMMh = 18.0f;
+    p.rainCoupling = 0.8f;
+    p.rainLevel = 0.55f;
+    p.rainSurface = 0.4f;
+    p.rainFollow = 0.8f;
+    p.rumbleMix = 0.3f;
+
+    renderScore (dir + "/03_rain_overlay_to_fuse.wav", s, bar * 8 + 4.0, p, [bar] (double t, EngineParams& q) {
+        q.rainBlend = (float) std::clamp ((t - 2.0 * bar) / (bar * 4.0), 0.0, 1.0);
     });
 }
 
@@ -223,14 +261,14 @@ void stormPrelude (const std::string& dir)
     p.rumbleDecayS = 6.0f;
     p.crackLevel = 0.6f;
     p.turbulence = 0.45f;
-    p.windFilter = 0.5f;
-    p.windAir = 0.12f;
+    p.windTimbre = 0.5f;
+    p.windAir = 0.25f;
     p.rainCoupling = 0.75f;
     p.rainLevel = 0.4f;
     p.rainSurface = 0.45f;
 
     const double end = t + 10.0;
-    renderScore (dir + "/03_storm_prelude.wav", s, end, p, [end] (double now, EngineParams& q) {
+    renderScore (dir + "/04_storm_prelude.wav", s, end, p, [end] (double now, EngineParams& q) {
         const double x = std::min (1.0, now / (end * 0.6));
         q.windSpeedMs = (float) (4.0 + 12.0 * x);
         q.rainRateMMh = (float) (3.0 + 25.0 * x);
@@ -259,7 +297,7 @@ void dryPiano (const std::string& dir)
     p.rainLevel = 0.0f;
     p.rumbleMix = 0.15f;
     p.crackLevel = 0.4f;
-    renderScore (dir + "/04_dry_piano.wav", s, t + 2.0, p);
+    renderScore (dir + "/05_dry_piano.wav", s, t + 2.0, p);
 }
 
 //==============================================================================
@@ -307,7 +345,8 @@ int main (int argc, char** argv)
     }
 
     velocityIsDistance (arg);
-    windSustain (arg);
+    windOverlayToFuse (arg);
+    rainOverlayToFuse (arg);
     stormPrelude (arg);
     dryPiano (arg);
     return 0;

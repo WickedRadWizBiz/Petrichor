@@ -21,26 +21,29 @@ struct EngineParams
     float stereoWidth    = 0.7f;   // 0..1
     float pianoLevelDb   = 0.0f;
 
-    // Thunder (velocity = distance)
+    // Thunder = the hammer-string interaction (velocity = distance). Always fused.
     float stormDistanceM = 1200.0f; // distance of a velocity-1 strike
-    float crackLevel     = 0.5f;    // 0..1
-    float airAbsorption  = 0.4f;    // 0..1, absorption applied to the string tone
-    float rumbleMix      = 0.35f;   // 0..1
-    float rumbleDecayS   = 5.0f;    // RT60 of the farthest zone
+    float crackLevel     = 0.5f;    // 0..1, broadband crack in the hammer force
+    float airAbsorption  = 0.5f;    // 0..1, scales alpha(f) applied to the strike
+    float rumbleMix      = 0.35f;   // 0..1, multipath contact + body rumble
+    float rumbleDecayS   = 5.0f;    // RT60 of the farthest body-rumble zone
 
     // Wind (Kolmogorov / Strouhal)
     float windSpeedMs    = 8.0f;    // 0..30
     float turbulence     = 0.35f;   // 0..1
     float gustLengthM    = 12.0f;   // integral length scale
-    float windDrift      = 0.35f;   // Doppler micro-pitch, 0..1
-    float windFilter     = 0.4f;    // band-pass sweep, 0..1
-    float windAir        = 0.15f;   // audible wind bed, 0..1
+    float windBlend      = 0.7f;    // 0 = overlay (audible wind layer), 1 = fused into the notes
+    float windPitch      = 0.35f;   // fused: how far notes bend with the wind, 0..1
+    float windTimbre     = 0.4f;    // fused: gust brightness + band-pass sweep, 0..1
+    float windAir        = 0.3f;    // overlay: level of the audible wind layer, 0..1
 
     // Rain (Marshall-Palmer granular)
     float rainRateMMh    = 8.0f;    // 0..150
     float rainCoupling   = 0.6f;    // 0..1
     float rainLevel      = 0.35f;   // 0..1
     float rainSurface    = 0.3f;    // 0..1
+    float rainBlend      = 0.5f;    // 0 = overlay layer, 1 = fused into the piano sound
+    float rainFollow     = 0.6f;    // overlay: how much the rain follows the piano's dynamics
 
     // Global
     float tuningA4Hz     = 440.0f;
@@ -102,6 +105,7 @@ private:
     };
 
     void controlTick (float dt) noexcept;
+    void landDrops() noexcept;
     void renderBlock (float* left, float* right, int numSamples) noexcept;
     StrikeSettings makeStrikeSettings() const noexcept;
     int findVoiceForKey (int key) const noexcept;
@@ -111,15 +115,22 @@ private:
     double sampleRate = 48000.0;
     EngineParams params;
 
-    std::array<VoiceSlot, kMaxVoices> voices;
+    std::vector<VoiceSlot> voices = std::vector<VoiceSlot> (kMaxVoices); // heap: each voice carries its contact buffers
     StormWind wind;
     RainTexture rain;
     WindAir air;
     MultipathRumble rumble;
 
-    std::vector<float> voiceBuffer;
+    std::vector<float> voiceBuffer, pianoLeft, pianoRight, patterLeft, patterRight;
     std::array<std::vector<float>, MultipathRumble::kZones> sendBuffers;
-    std::vector<float> wetLeft, wetRight;
+
+    // What the rain hears of the piano, measured on the dry piano bus.
+    PianoFollow pianoFollow;
+    double followEnergy = 0.0, followSlopeEnergy = 0.0;
+    int followSamples = 0;
+    float followPrevious = 0.0f;
+    Rng dropRng { 0xD20Bu };
+    int numDropEvents = 0;
 
     int samplesUntilControl = 0;
     bool sustainPedal = false, softPedal = false;

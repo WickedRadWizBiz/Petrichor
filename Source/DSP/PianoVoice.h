@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vector>
 #include "Atmosphere.h"
 #include "KolmogorovNoise.h"
 #include "StormWind.h"
@@ -15,16 +16,18 @@ struct StrikeSettings
     float decayScale      = 1.0f;    // multiplies every string T60
     float unisonCents     = 1.2f;    // mistuning between the unison strings
     float maxDistanceM    = 1200.0f; // distance of a velocity-1 strike
-    float toneAbsorption  = 0.4f;    // how much of the absorption reaches the string tone (transient: always 100%)
-    float crackLevel      = 0.5f;    // level of the hammer / lightning transient
+    float absorption      = 0.5f;    // 0..1, scales alpha(f): how strongly distance darkens the strike
+    float crackLevel      = 0.5f;    // broadband crack S(t) = A e^(-t/tau) n(t) in the hammer force
+    float multipath       = 0.35f;   // 0..1, rolling multipath in the hammer-string contact
     bool  softPedal       = false;   // una corda
 };
 
-/** Live wind-coupling amounts, read every control tick. */
+/** Wind fused into the note, read every control tick. */
 struct VoiceWindSettings
 {
-    float drift  = 0.35f; // Doppler micro-pitch depth, 0..1
-    float filter = 0.4f;  // resonant band-pass sweep / swell, 0..1
+    float fuse   = 1.0f;  // 0 = overlay only (note untouched), 1 = fully fused
+    float pitch  = 0.35f; // how far the note's pitch follows the wind, like an Aeolian tone (f ~ U)
+    float timbre = 0.4f;  // gust-driven brightness tilt + resonant band-pass sweep
 };
 
 /**
@@ -33,17 +36,26 @@ struct VoiceWindSettings
     Each partial n of the stiff string sits at f_n = n f0 sqrt(1 + B n^2) and is rendered by two
     complex one-pole resonators (the in-phase "prompt" mode and the slowly decaying, slightly
     detuned "aftersound" mode), giving the double decay and beating of real unison strings.
-    A non-linear felt hammer pulse drives all modes, so contact time - and therefore brightness -
-    follows the strike velocity.
 
-    The strike is also the lightning impulse: MIDI velocity is mapped to a distance
-    x ~ (127 - V), and the attack transient S(t) = A e^(-t/tau) n(t) is passed through an
-    atmospheric-absorption low-pass whose cutoff falls as sqrt(1/x). The same exp(-alpha(f) x)
-    weighting can be applied directly to every partial's excitation (toneAbsorption).
+    THUNDER IS THE HAMMER-STRING INTERACTION. The strike is the lightning impulse: MIDI velocity
+    becomes a distance x ~ (127 - V). The force the string receives is
+        F(t) = [gamma felt pulse + crack A e^(-t/tau) n(t)] * h(t)
+    where h(t) is a multipath train of delayed, progressively darker re-contacts spaced by the
+    string's own reflection time (strike point to termination and back). Close strikes are a single
+    sharp contact; distant ones roll on through several smeared contacts. Every partial's
+    excitation is weighted by exp(-alpha(f_n) x) with alpha ~ f^2 - the atmospheric absorption
+    applied exactly, partial by partial - and distant strikes also leave a louder, longer
+    aftersound (decay and "wet" share rise as velocity falls).
 
-    Each voice owns a Kolmogorov LFO whose corner follows the Strouhal law f = St U / L, with the
-    note's wavelength as the obstacle length L. It drives a Doppler micro-pitch drift and a gentle
-    resonant band-pass sweeping across the partials.
+    WIND (fused) bends the note the way wind bends an Aeolian tone: f ~ U, so the pitch ratio is
+    (U_key / U_mean)^depth, where U_key combines the storm's gusts with a per-key Kolmogorov
+    turbulence LFO whose corner follows the Strouhal law f_c = St U / L (L = the note's wavelength:
+    low keys brood slowly, high keys flutter). The same local wind tilts the brightness and sweeps
+    a gentle resonant band-pass across the partials.
+
+    RAIN (fused) lands on the strings: drops are impulses into the ringing modes, shaped by the
+    drop's impact spectrum, and a continuous rain hiss excites the modes so the texture sounds in
+    the note's own partials. Both scale with the string's current energy.
 */
 class PianoVoice
 {
@@ -52,7 +64,7 @@ public:
     static constexpr int kModesPerPartial = 2;
     static constexpr int kMaxModes        = kMaxPartials * kModesPerPartial;
     static constexpr int kLanes           = 8;
-    static constexpr int kMaxPulse        = 4096;
+    static constexpr int kMaxForce        = 16384;
 
     void prepare (double sampleRate, uint32_t seed);
 
@@ -65,8 +77,11 @@ public:
     /** Fade out quickly so the voice can be reused (voice stealing). */
     void beginSteal() noexcept;
 
-    /** Called every control period. */
-    void controlTick (const WindState& wind, const VoiceWindSettings& settings, float dt) noexcept;
+    /** Called every control period. rainHiss is the fused rain-hiss level relative to the string. */
+    void controlTick (const WindState& wind, const VoiceWindSettings& settings, float rainHiss, float dt) noexcept;
+
+    /** A raindrop lands on this string. amount is relative to the string's current amplitude. */
+    void rainDrop (float amount, float impactCentreHz) noexcept;
 
     /** Renders numSamples of mono output, overwriting out. */
     void render (float* out, int numSamples) noexcept;
@@ -78,6 +93,7 @@ public:
     float getDistanceFraction() const noexcept { return distanceFraction; }
     float getStrikeDistance() const noexcept   { return strikeDistance; }
     float getVelocity() const noexcept         { return velocity; }
+    float getFundamentalHz() const noexcept    { return fundamentalHz; }
 
     /** Current kinetic-energy estimate of the string (sum of |mode|^2), used for voice stealing. */
     float getEnergy() const noexcept { return energy; }
@@ -85,10 +101,13 @@ public:
     /** Smoothed output level for the UI. */
     float getLevel() const noexcept { return level; }
 
-    /** Current wind modulation, for the visualiser. */
-    float getWindLfo() const noexcept { return lfoValue; }
+    /** Current local turbulence (unit variance) and wind pitch ratio, for tests and the visualiser. */
+    float getWindLfo() const noexcept    { return lfoValue; }
+    float getPitchRatio() const noexcept { return currentRatio; }
 
     int getNumActiveModes() const noexcept { return numModes; }
+    int getForceLength() const noexcept    { return forceLength; }
+    const float* getForce() const noexcept { return force.data(); }
 
     // Exposed for tests / visualisation.
     static float inharmonicity (int midiKey) noexcept;
@@ -98,9 +117,10 @@ public:
 private:
     float tickModes() noexcept;
     float tickModesDriven (float force) noexcept;
-    float tickTransient() noexcept;
+    float tickThump() noexcept;
+    void  buildForce (const StrikeSettings& s, float kNorm, float corner, float order, float impulse, float strikePoint);
     void  applyPitchRatio (float ratio) noexcept;
-    void  updateFilterWeights (float centreHz, float emphasis) noexcept;
+    void  updateWeights (float centreHz, float emphasis, float tilt) noexcept;
     void  trimSilentModes() noexcept;
     void  foldEnvelopeIntoState() noexcept;
 
@@ -115,13 +135,16 @@ private:
     alignas (32) float zi0[kMaxModes] {};
     alignas (32) float omega[kMaxModes] {};
     alignas (32) float drive[kMaxModes] {};
+    alignas (32) float hissDrive[kMaxModes] {};
     alignas (32) float weight[kMaxModes] {};
     alignas (32) float modeHz[kMaxModes] {};
+    alignas (32) float octaves[kMaxModes] {}; // log2(f_mode / f1), for the brightness tilt
+    alignas (32) float hitShape[kMaxModes] {}; // scratch for rain drops
     int numModes = 0;
 
-    // Hammer
-    float pulse[kMaxPulse] {};
-    int pulseLength = 0, pulsePos = 0;
+    // Hammer-string contact: the full excitation force, built at strike time (allocated in prepare).
+    std::vector<float> force, scratch;
+    int forceLength = 0, forcePos = 0;
 
     // State
     bool active = false, damping = false, stealing = false;
@@ -137,22 +160,23 @@ private:
     float glideDepth = 0.0f;
     float currentRatio = 1.0f;
     float swellGain = 1.0f, swellTarget = 1.0f, swellStep = 0.0f;
-    float lastCentre = -1.0f, lastEmphasis = -1.0f;
+    float lastCentre = -1.0f, lastEmphasis = -1.0f, lastTilt = 0.0f;
+    float hissAmp = 0.0f;
+    // Open-loop reference envelope of the strike (captured after contact, decays at the string's
+    // slowest rate). Rain rides on this, never on the live energy, so it cannot sustain itself.
+    float referenceEnergy = 0.0f, referenceDecay = 0.0f;
 
     // Wind
     KolmogorovNoise lfo;
     float lfoValue = 0.0f;
 
-    // Attack transient (hammer knock = lightning crack) through the absorption cascade.
-    struct Transient
+    // Soundboard knock that accompanies the strike (the only part heard directly).
+    struct Thump
     {
         bool  active = false;
-        float noiseAmp = 0.0f, noiseDecay = 0.0f;
-        float thumpRe = 0.0f, thumpIm = 0.0f, thumpZr = 0.0f, thumpZi = 0.0f;
+        float re = 0.0f, im = 0.0f, zr = 0.0f, zi = 0.0f;
         int   samplesLeft = 0, delay = 0;
-        OnePoleHP highPass;
-        OnePoleLP absorb[4];
-    } transient;
+    } thump;
 
     Rng rng;
 };

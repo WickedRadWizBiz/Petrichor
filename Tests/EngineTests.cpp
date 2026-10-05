@@ -269,7 +269,7 @@ void testPitchAndInharmonicity()
     StrikeSettings s;
     s.unisonCents = 0.0f;
     s.crackLevel = 0.0f;
-    s.toneAbsorption = 0.0f;
+    s.absorption = 0.0f;
 
     auto renderKey = [&] (int key, float vel, double seconds) {
         v.prepare (kFs, 7);
@@ -279,7 +279,7 @@ void testPitchAndInharmonicity()
         VoiceWindSettings ws;
         for (size_t pos = 0; pos < out.size(); pos += 32)
         {
-            v.controlTick (calm, ws, 32.0f / (float) kFs);
+            v.controlTick (calm, ws, 0.0f, 32.0f / (float) kFs);
             v.render (out.data() + pos, (int) std::min<size_t> (32, out.size() - pos));
         }
         return out;
@@ -373,7 +373,7 @@ void testStrouhalLfoRate()
         std::vector<float> scratch (32);
         for (int t = 0; t < (int) (8.0f / dt); ++t)
         {
-            v.controlTick (w, ws, dt);
+            v.controlTick (w, ws, 0.0f, dt);
             v.render (scratch.data(), 32);
             const float x = v.getWindLfo();
             if ((x > 0.0f) != (prev > 0.0f)) ++count;
@@ -398,16 +398,20 @@ void testRainCoupling()
         s.coupling = 1.0f;
         s.level = 1.0f;
         s.surface = 0.0f;
+        s.overlay = 1.0f;
+        s.fuse = 0.0f;
+        s.follow = 0.0f;
         WindState w;
         w.meanSpeed = 10.0f;
         w.speed = windSpeed;
         w.gustFactor = gustFactor;
         const size_t n = (size_t) (3.0 * kFs);
-        std::vector<float> l (n, 0.0f), r (n, 0.0f);
+        std::vector<float> l (n, 0.0f), r (n, 0.0f), pl (32), pr (32);
         for (size_t pos = 0; pos < n; pos += 32)
         {
-            rain.controlTick (w, s, 32.0f / (float) kFs);
-            rain.render (l.data() + pos, r.data() + pos, 32);
+            rain.controlTick (w, s, PianoFollow{}, 32.0f / (float) kFs);
+            rain.beginBlock (32);
+            rain.render (l.data() + pos, r.data() + pos, pl.data(), pr.data(), 32);
         }
         grainRate = rain.getGrainRate();
         const auto m = mono (l, r);
@@ -430,6 +434,184 @@ void testRainCoupling()
     CHECK (gustCentroid > 1.3 * lullCentroid, "gusts brighten the texture");
 }
 
+
+void testThunderIsTheHammer()
+{
+    std::printf ("Thunder: the strike lives in the hammer-string contact\n");
+    auto contact = [] (int velocity, float multipath, int& peaks, float& span) {
+        PianoVoice v;
+        v.prepare (kFs, 11);
+        StrikeSettings s;
+        s.crackLevel = 0.0f;
+        s.multipath = multipath;
+        v.strike (48, (float) velocity / 127.0f, s);
+        const float* f = v.getForce();
+        const int n = v.getForceLength();
+        float peak = 0.0f;
+        for (int i = 0; i < n; ++i) peak = std::max (peak, f[i]);
+        // Count separate contacts: rising crossings of 30 % of the main peak.
+        peaks = 0;
+        int first = -1, last = 0;
+        for (int i = 1; i < n; ++i)
+        {
+            if (f[i] >= 0.3f * peak && f[i - 1] < 0.3f * peak) ++peaks;
+            if (f[i] > 0.01f * peak) { if (first < 0) first = i; last = i; }
+        }
+        span = (float) (last - std::max (first, 0)) / (float) kFs * 1000.0f;
+    };
+
+    int hardPeaks, softPeaks, dryPeaks;
+    float hardSpan, softSpan, drySpan;
+    contact (127, 1.0f, hardPeaks, hardSpan);
+    contact (25, 1.0f, softPeaks, softSpan);
+    contact (25, 0.0f, dryPeaks, drySpan);
+    std::printf ("  contacts: V=127 %d (%.1f ms) | V=25 %d (%.1f ms) | V=25 without multipath %d (%.1f ms)\n",
+                 hardPeaks, hardSpan, softPeaks, softSpan, dryPeaks, drySpan);
+    CHECK (hardPeaks == 1, "a close strike is one localised contact (%d)", hardPeaks);
+    CHECK (softPeaks >= 3 && softSpan > 2.0f * hardSpan, "a distant strike rolls through several contacts");
+    CHECK (dryPeaks == 1, "multipath off: one contact");
+
+    // No separate thunder sound: with the strings removed (crack only, absorbing distance huge),
+    // what reaches the output is the strings' response, so a crack-only strike stays pitched.
+    PetrichorEngine e;
+    e.prepare (kFs, 512);
+    EngineParams p = dryParams();
+    p.crackLevel = 1.0f;
+    e.setParams (p);
+    std::vector<float> l, r;
+    render (e, 0.5, l, r, [&] (size_t pos) { if (pos == 0) e.noteOn (69, 127); });
+    const auto m = mono (l, r);
+    const size_t n = 8192;
+    const auto mag = magnitudeSpectrum (m, 0, n);
+    double onPartials = 0.0, total = 0.0;
+    for (size_t i = 1; i < mag.size(); ++i)
+    {
+        const double f = (double) i * kFs / (double) n;
+        const double harmonic = f / 440.0;
+        const double p2 = mag[i] * mag[i];
+        total += p2;
+        if (f > 300.0 && std::abs (harmonic - std::round (harmonic)) < 0.04 * std::max (1.0, std::round (harmonic) * 0.5))
+            onPartials += p2;
+    }
+    std::printf ("  crack energy on string partials: %.1f %%\n", 100.0 * onPartials / total);
+    CHECK (onPartials / total > 0.8, "the crack is heard through the string, not beside it");
+}
+
+void testWindFuse()
+{
+    std::printf ("Wind: overlay <-> fuse\n");
+    auto pitchSpread = [] (float fuse) {
+        PianoVoice v;
+        v.prepare (kFs, 21);
+        StrikeSettings s;
+        s.decayScale = 3.0f;
+        v.strike (60, 0.6f, s);
+        WindState w;
+        w.meanSpeed = 12.0f;
+        w.intensity = 0.4f;
+        VoiceWindSettings ws;
+        ws.fuse = fuse;
+        ws.pitch = 1.0f;
+        KolmogorovNoise gust;
+        gust.reset (5);
+        const float dt = 32.0f / (float) kFs;
+        std::vector<float> scratch (32);
+        double sum = 0.0, sum2 = 0.0;
+        int count = 0;
+        for (int t = 0; t < (int) (6.0f / dt); ++t)
+        {
+            w.gust = gust.advance (0.4f, dt);
+            w.gustFactor = std::max (0.0f, 1.0f + w.intensity * w.gust);
+            w.speed = w.meanSpeed * w.gustFactor;
+            v.controlTick (w, ws, 0.0f, dt);
+            v.render (scratch.data(), 32);
+            if (t * dt > 1.0f)
+            {
+                const double cents = 1200.0 * std::log2 ((double) v.getPitchRatio());
+                sum += cents; sum2 += cents * cents; ++count;
+            }
+        }
+        const double mean = sum / count;
+        return std::sqrt (std::max (0.0, sum2 / count - mean * mean));
+    };
+
+    const double overlay = pitchSpread (0.0f), fused = pitchSpread (1.0f);
+    std::printf ("  pitch deviation (rms cents): overlay %.2f, fused %.2f\n", overlay, fused);
+    CHECK (overlay < 0.01, "overlay leaves the note's pitch alone");
+    CHECK (fused > 3.0, "fused wind bends the note like an Aeolian tone");
+}
+
+void testRainOverlayAndFuse()
+{
+    std::printf ("Rain: overlay follows the piano, fuse lives inside it\n");
+
+    // Overlay with full follow is silent when the piano is, and present when it plays.
+    auto overlayEnergy = [] (float pianoEnvelope) {
+        RainTexture rain;
+        rain.prepare (kFs, 9);
+        RainSettings s;
+        s.baseRateMMh = 20.0f; s.level = 1.0f; s.overlay = 1.0f; s.fuse = 0.0f; s.follow = 1.0f;
+        WindState w;
+        PianoFollow piano { pianoEnvelope, 800.0f };
+        const size_t n = (size_t) kFs;
+        std::vector<float> l (n, 0.0f), r (n, 0.0f), pl (32), pr (32);
+        for (size_t pos = 0; pos < n; pos += 32)
+        {
+            rain.controlTick (w, s, piano, 32.0f / (float) kFs);
+            rain.beginBlock (32);
+            rain.render (l.data() + pos, r.data() + pos, pl.data(), pr.data(), 32);
+        }
+        return energy (l, n / 2, n) + energy (r, n / 2, n);
+    };
+    const double quiet = overlayEnergy (0.0f), loud = overlayEnergy (1.0f);
+    std::printf ("  overlay energy, follow=1: piano silent %.2e, piano playing %.2e\n", quiet, loud);
+    CHECK (quiet < 1e-9 && loud > 1e-4, "overlay rain follows the piano");
+
+    // Fused rain makes no sound of its own...
+    auto engineRender = [] (float blend, float level, bool play) {
+        PetrichorEngine e;
+        e.prepare (kFs, 512);
+        EngineParams p = dryParams();
+        p.rainRateMMh = 25.0f;
+        p.rainLevel = level;
+        p.rainBlend = blend;
+        p.rainFollow = 0.0f;
+        p.sustain = 2.0f;
+        e.setParams (p);
+        std::vector<float> l, r;
+        render (e, 3.0, l, r, [&] (size_t pos) { if (play && pos == 0) { e.noteOn (57, 90); e.noteOn (64, 80); } });
+        return mono (l, r);
+    };
+    const auto silentFuse = engineRender (1.0f, 0.8f, false);
+    const auto silentOverlay = engineRender (0.0f, 0.8f, false);
+    std::printf ("  no notes: fused rain energy %.2e, overlay rain energy %.2e\n",
+                 energy (silentFuse, 0, silentFuse.size()), energy (silentOverlay, 0, silentOverlay.size()));
+    CHECK (energy (silentFuse, 0, silentFuse.size()) == 0.0, "fused rain only exists inside the piano");
+    CHECK (energy (silentOverlay, 0, silentOverlay.size()) > 1e-4, "overlay rain plays on its own");
+
+    // ...but texturises the notes: more upper-band energy and a rougher envelope than the dry notes.
+    const auto dry = engineRender (1.0f, 0.0f, true);
+    const auto fused = engineRender (1.0f, 0.8f, true);
+    auto band = [] (const std::vector<float>& x, double lo, double hi) {
+        const size_t seg = 8192;
+        double e = 0.0;
+        for (size_t s0 = (size_t) (1.5 * kFs); s0 + seg <= x.size(); s0 += seg)
+        {
+            const auto mag = magnitudeSpectrum (x, s0, seg);
+            for (size_t i = 1; i < mag.size(); ++i)
+            {
+                const double f = (double) i * kFs / seg;
+                if (f >= lo && f < hi) e += mag[i] * mag[i];
+            }
+        }
+        return e;
+    };
+    const double dryHigh = band (dry, 3000.0, 12000.0), fusedHigh = band (fused, 3000.0, 12000.0);
+    std::printf ("  sustained notes, 3-12 kHz energy: dry %.3e, rain fused %.3e (%.1f dB)\n",
+                 dryHigh, fusedHigh, 10.0 * std::log10 (fusedHigh / dryHigh));
+    CHECK (fusedHigh > 2.0 * dryHigh, "fused rain adds texture inside the notes");
+}
+
 void testStabilityAndSilence()
 {
     std::printf ("Engine stability\n");
@@ -448,7 +630,8 @@ void testStabilityAndSilence()
         PetrichorEngine e;
         e.prepare (96000.0, 512);
         EngineParams p;
-        p.windSpeedMs = 30.0f; p.turbulence = 1.0f; p.windDrift = 1.0f; p.windFilter = 1.0f; p.windAir = 1.0f;
+        p.windSpeedMs = 30.0f; p.turbulence = 1.0f; p.windPitch = 1.0f; p.windTimbre = 1.0f; p.windAir = 1.0f; p.windBlend = 0.5f;
+        p.rainBlend = 0.5f; p.rainFollow = 1.0f;
         p.rainRateMMh = 150.0f; p.rainCoupling = 1.0f; p.rainLevel = 1.0f; p.rainSurface = 1.0f;
         p.rumbleMix = 1.0f; p.rumbleDecayS = 12.0f; p.crackLevel = 1.0f; p.sustain = 3.0f; p.hammerHardness = 1.0f;
         e.setParams (p);
@@ -506,6 +689,9 @@ int main()
     testRumbleScalesInverselyWithVelocity();
     testStrouhalLfoRate();
     testRainCoupling();
+    testThunderIsTheHammer();
+    testWindFuse();
+    testRainOverlayAndFuse();
     testStabilityAndSilence();
     testPerformance();
 

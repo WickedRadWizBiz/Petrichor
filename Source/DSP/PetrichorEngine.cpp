@@ -3,6 +3,16 @@
 namespace petrichor
 {
 
+namespace
+{
+    /** Equal-power Overlay <-> Fuse blend. */
+    inline float overlayAmount (float blend) noexcept { return std::cos (clampf (blend, 0.0f, 1.0f) * kPi * 0.5f); }
+    inline float fuseAmount (float blend) noexcept    { return std::sin (clampf (blend, 0.0f, 1.0f) * kPi * 0.5f); }
+
+    /** Piano bus RMS that counts as "moderately loud" for the rain's follow envelope. */
+    constexpr float kFollowReference = 0.04f;
+}
+
 void PetrichorEngine::prepare (double newSampleRate, int /*maxBlockSize*/)
 {
     sampleRate = newSampleRate;
@@ -19,9 +29,15 @@ void PetrichorEngine::prepare (double newSampleRate, int /*maxBlockSize*/)
     air.prepare (sampleRate, 0xA1Bu);
     rumble.prepare (sampleRate, 0x7E11u);
 
-    voiceBuffer.assign (kControlBlock, 0.0f);
+    for (auto* b : { &voiceBuffer, &pianoLeft, &pianoRight, &patterLeft, &patterRight })
+        b->assign (kControlBlock, 0.0f);
     for (auto& b : sendBuffers)
         b.assign (kControlBlock, 0.0f);
+
+    pianoFollow = PianoFollow{};
+    followEnergy = followSlopeEnergy = 0.0;
+    followSamples = 0;
+    followPrevious = 0.0f;
 
     samplesUntilControl = 0;
     voiceGainSmoothed = dbToGain (params.pianoLevelDb);
@@ -43,8 +59,9 @@ StrikeSettings PetrichorEngine::makeStrikeSettings() const noexcept
     s.decayScale     = params.sustain;
     s.unisonCents    = params.unisonCents;
     s.maxDistanceM   = params.stormDistanceM;
-    s.toneAbsorption = params.airAbsorption;
+    s.absorption     = params.airAbsorption;
     s.crackLevel     = params.crackLevel;
+    s.multipath      = params.rumbleMix;
     s.softPedal      = softPedal;
     return s;
 }
@@ -202,21 +219,44 @@ void PetrichorEngine::controlTick (float dt) noexcept
     wind.setParameters (params.windSpeedMs, params.turbulence, params.gustLengthM);
     const WindState& ws = wind.tick (dt);
 
+    // What the rain hears of the piano: envelope (fast attack, slow release) and spectral centre.
+    if (followSamples > 0)
+    {
+        const float rms = (float) std::sqrt (followEnergy / followSamples);
+        const float target = rms / kFollowReference;
+        const float tc = target > pianoFollow.envelope ? 0.01f : 0.3f;
+        pianoFollow.envelope += (target - pianoFollow.envelope) * (1.0f - std::exp (-dt / tc));
+
+        if (followEnergy > 1.0e-12)
+        {
+            // RMS frequency: sqrt(E[x'^2] / E[x^2]) * fs / 2 pi.
+            const float centroid = (float) (std::sqrt (followSlopeEnergy / followEnergy) * sampleRate / (2.0 * M_PI));
+            pianoFollow.centroidHz += (centroid - pianoFollow.centroidHz) * (1.0f - std::exp (-dt / 0.1f));
+        }
+        followEnergy = followSlopeEnergy = 0.0;
+        followSamples = 0;
+    }
+
     RainSettings rs;
     rs.baseRateMMh = params.rainRateMMh;
     rs.coupling    = params.rainCoupling;
     rs.level       = params.rainLevel;
     rs.surface     = params.rainSurface;
-    rain.controlTick (ws, rs, dt);
+    rs.overlay     = overlayAmount (params.rainBlend);
+    rs.fuse        = fuseAmount (params.rainBlend);
+    rs.follow      = params.rainFollow;
+    rain.controlTick (ws, rs, pianoFollow, dt);
 
-    air.controlTick (ws, params.windAir, dt);
+    air.controlTick (ws, params.windAir * overlayAmount (params.windBlend), dt);
 
     rumble.setDecay (params.rumbleDecayS);
     rumble.controlTick (ws, dt);
 
     VoiceWindSettings vw;
-    vw.drift  = params.windDrift;
-    vw.filter = params.windFilter;
+    vw.fuse   = fuseAmount (params.windBlend);
+    vw.pitch  = params.windPitch;
+    vw.timbre = params.windTimbre;
+    const float rainHiss = rain.getFusedHiss();
 
     const StrikeSettings strikeSettings = makeStrikeSettings();
 
@@ -231,7 +271,39 @@ void PetrichorEngine::controlTick (float dt) noexcept
         }
 
         if (slot.voice.isActive())
-            slot.voice.controlTick (ws, vw, dt);
+            slot.voice.controlTick (ws, vw, rainHiss, dt);
+    }
+}
+
+void PetrichorEngine::landDrops() noexcept
+{
+    // Fused rain: each drop lands on a ringing string, more often on the louder ones.
+    const float gain = rain.getFusedDropGain();
+    if (gain <= 0.0f)
+        return;
+
+    float total = 0.0f;
+    for (const auto& slot : voices)
+        if (slot.voice.isActive() && ! slot.voice.isStealing())
+            total += std::sqrt (slot.voice.getEnergy());
+    if (total <= 0.0f)
+        return;
+
+    const DropEvent* events = rain.getEvents();
+    for (int e = 0; e < numDropEvents; ++e)
+    {
+        float pick = dropRng.uniform() * total;
+        for (auto& slot : voices)
+        {
+            if (! slot.voice.isActive() || slot.voice.isStealing())
+                continue;
+            pick -= std::sqrt (slot.voice.getEnergy());
+            if (pick <= 0.0f)
+            {
+                slot.voice.rainDrop (RainTexture::fusedDropStrength (events[e].amount) * gain, events[e].centreHz);
+                break;
+            }
+        }
     }
 }
 
@@ -239,8 +311,13 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
 {
     std::fill (left, left + n, 0.0f);
     std::fill (right, right + n, 0.0f);
+    std::fill (pianoLeft.begin(), pianoLeft.begin() + n, 0.0f);
+    std::fill (pianoRight.begin(), pianoRight.begin() + n, 0.0f);
     for (auto& b : sendBuffers)
         std::fill (b.begin(), b.begin() + n, 0.0f);
+
+    numDropEvents = rain.beginBlock (n);
+    landDrops();
 
     const float voiceGainTarget = dbToGain (params.pianoLevelDb);
     const float masterTarget = dbToGain (params.masterDb);
@@ -273,15 +350,34 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
         {
             const float y = voiceBuffer[(size_t) i] * g;
             g += voiceGainStep;
-            left[i]  += y * pl;
-            right[i] += y * pr;
+            pianoLeft[(size_t) i]  += y * pl;
+            pianoRight[(size_t) i] += y * pr;
             sendBuffers[0][(size_t) i] += y * s0;
             sendBuffers[1][(size_t) i] += y * s1;
             sendBuffers[2][(size_t) i] += y * s2;
         }
     }
 
-    rain.render (left, right, n);
+    // Rain overlay goes straight to the mix; its patter modulates the piano when fused.
+    rain.render (left, right, patterLeft.data(), patterRight.data(), n);
+    const float patterDepth = rain.getPatterDepth();
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float pl = pianoLeft[(size_t) i], pr = pianoRight[(size_t) i];
+
+        // Measure the dry piano for the rain's follow envelope and spectral centre.
+        const float mono = 0.5f * (pl + pr);
+        const float slope = mono - followPrevious;
+        followPrevious = mono;
+        followEnergy += (double) mono * mono;
+        followSlopeEnergy += (double) slope * slope;
+
+        left[i]  += pl * clampf (1.0f + patterDepth * patterLeft[(size_t) i], 0.3f, 1.7f);
+        right[i] += pr * clampf (1.0f + patterDepth * patterRight[(size_t) i], 0.3f, 1.7f);
+    }
+    followSamples += n;
+
     air.render (left, right, n);
 
     const float* sends[MultipathRumble::kZones] = { sendBuffers[0].data(), sendBuffers[1].data(), sendBuffers[2].data() };
