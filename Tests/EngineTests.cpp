@@ -1,6 +1,7 @@
 // Physics and behaviour tests for the Petrichor engine. No framework, no JUCE: build and run
 //   cmake -B build -DPETRICHOR_ENGINE_ONLY=ON && cmake --build build && ./build/PetrichorTests
 
+#define _USE_MATH_DEFINES // M_PI on MSVC
 #include <chrono>
 #include <complex>
 #include <cstdio>

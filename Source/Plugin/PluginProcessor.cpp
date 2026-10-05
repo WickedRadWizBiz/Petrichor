@@ -44,8 +44,13 @@ void PetrichorAudioProcessor::handleMidi (const juce::MidiMessage& m) noexcept
         engine.setSoftPedal (false);
     else if (m.isAllSoundOff())
         engine.allSoundOff();
-    else if (m.isAllNotesOff() || m.isResetAllControllers())
+    else if (m.isAllNotesOff())
         engine.allNotesOff();
+    else if (m.isResetAllControllers())
+    {
+        engine.setSustainPedal (false); // releases pedal-held strings; keys still down keep sounding
+        engine.setSoftPedal (false);
+    }
 }
 
 void PetrichorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)

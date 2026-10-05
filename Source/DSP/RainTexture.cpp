@@ -23,6 +23,7 @@ float RainTexture::impactCentreHz (float speed) noexcept
 void RainTexture::prepare (double sampleRate, uint32_t seed)
 {
     fs = (float) sampleRate;
+    noiseScale = std::sqrt (fs / 48000.0f); // keep white-noise density (and level) independent of fs
     rng.setSeed (seed);
     numGrains = numEvents = 0;
     samplesToNextDrop = 0.0f;
@@ -42,9 +43,11 @@ void RainTexture::controlTick (const WindState& wind, const RainSettings& s, con
     overlay = clampf (s.overlay, 0.0f, 1.0f);
     const float fuse = clampf (s.fuse, 0.0f, 1.0f);
 
-    // R tracks the absolute amplitude of the wind LFO.
+    // R tracks the absolute amplitude of the wind LFO: no wind, no gust-driven swell (full at 8 m/s).
     const float exponent = 3.0f * clampf (s.coupling, 0.0f, 1.0f);
-    const float target = std::max (s.baseRateMMh, 0.0f) * std::pow (std::max (wind.gustFactor, 0.0f), exponent);
+    const float drive = clampf (wind.meanSpeed / 8.0f, 0.0f, 1.0f);
+    const float swell = std::max (1.0f + drive * (wind.gustFactor - 1.0f), 0.0f);
+    const float target = std::max (s.baseRateMMh, 0.0f) * std::pow (swell, exponent);
     smoothedRate += (target - smoothedRate) * (1.0f - std::exp (-dt / 0.25f));
     rainRate = smoothedRate;
 
@@ -203,7 +206,7 @@ void RainTexture::render (float* left, float* right, float* patterLeft, float* p
 
             if (g.audible > 0.0f)
             {
-                g.resonator.process (rng.bipolar() * g.noiseEnv);
+                g.resonator.process (rng.bipolar() * g.noiseEnv * noiseScale);
                 float y = g.resonator.bandNormalised();
 
                 if (g.bubbleEnv > 0.0f)
@@ -231,8 +234,8 @@ void RainTexture::render (float* left, float* right, float* patterLeft, float* p
         const float hg = hissGain.next();
         if (hg > 0.0f)
         {
-            hissL.process (rng.bipolar());
-            hissR.process (rng.bipolar());
+            hissL.process (rng.bipolar() * noiseScale);
+            hissR.process (rng.bipolar() * noiseScale);
             l += hissHpL.process (hissL.lp) * hg;
             r += hissHpR.process (hissR.lp) * hg;
         }

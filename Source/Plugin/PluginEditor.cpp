@@ -45,6 +45,11 @@ PetrichorAudioProcessorEditor::PetrichorAudioProcessorEditor (PetrichorAudioProc
 PetrichorAudioProcessorEditor::~PetrichorAudioProcessorEditor()
 {
     stopTimer();
+
+    // Don't leave notes hanging if the window closes mid-press.
+    for (int key = 0; key < 128; ++key)
+        if (uiHeldKeys.test ((size_t) key))
+            processorRef.keyboardState.noteOff (1, key, 0.0f);
 }
 
 juce::WebBrowserComponent::Options PetrichorAudioProcessorEditor::createWebOptions()
@@ -62,14 +67,21 @@ juce::WebBrowserComponent::Options PetrichorAudioProcessorEditor::createWebOptio
         .withNativeFunction ("noteOn", [this] (const juce::Array<juce::var>& args, auto complete)
         {
             if (args.size() >= 2)
-                processorRef.keyboardState.noteOn (1, juce::jlimit (0, 127, (int) args[0]),
-                                                   juce::jlimit (1, 127, (int) args[1]) / 127.0f);
+            {
+                const int key = juce::jlimit (0, 127, (int) args[0]);
+                uiHeldKeys.set ((size_t) key);
+                processorRef.keyboardState.noteOn (1, key, juce::jlimit (1, 127, (int) args[1]) / 127.0f);
+            }
             complete ({});
         })
         .withNativeFunction ("noteOff", [this] (const juce::Array<juce::var>& args, auto complete)
         {
             if (args.size() >= 1)
-                processorRef.keyboardState.noteOff (1, juce::jlimit (0, 127, (int) args[0]), 0.0f);
+            {
+                const int key = juce::jlimit (0, 127, (int) args[0]);
+                uiHeldKeys.reset ((size_t) key);
+                processorRef.keyboardState.noteOff (1, key, 0.0f);
+            }
             complete ({});
         });
 

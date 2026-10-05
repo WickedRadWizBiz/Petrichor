@@ -186,7 +186,7 @@ void PetrichorEngine::setSustainPedal (bool down) noexcept
 
 void PetrichorEngine::allNotesOff() noexcept
 {
-    sustainPedal = false;
+    sustainPedal = softPedal = false;
     for (auto& slot : voices)
     {
         slot.keyHeld = false;
@@ -197,14 +197,13 @@ void PetrichorEngine::allNotesOff() noexcept
 
 void PetrichorEngine::allSoundOff() noexcept
 {
-    uint32_t seed = 0x5EED1234u;
     for (auto& slot : voices)
     {
-        slot.voice.prepare (sampleRate, seed += 0x9E3779B9u);
+        slot.voice.kill();
         slot.keyHeld = slot.hasPending = false;
     }
     rumble.clear();
-    sustainPedal = false;
+    sustainPedal = softPedal = false;
 }
 
 //==============================================================================
@@ -230,7 +229,7 @@ void PetrichorEngine::controlTick (float dt) noexcept
         if (followEnergy > 1.0e-12)
         {
             // RMS frequency: sqrt(E[x'^2] / E[x^2]) * fs / 2 pi.
-            const float centroid = (float) (std::sqrt (followSlopeEnergy / followEnergy) * sampleRate / (2.0 * M_PI));
+            const float centroid = (float) std::sqrt (followSlopeEnergy / followEnergy) * (float) sampleRate / kTwoPi;
             pianoFollow.centroidHz += (centroid - pianoFollow.centroidHz) * (1.0f - std::exp (-dt / 0.1f));
         }
         followEnergy = followSlopeEnergy = 0.0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bitset>
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
@@ -27,6 +28,7 @@ private:
     std::optional<juce::WebBrowserComponent::Resource> getResource (const juce::String& url) const;
 
     PetrichorAudioProcessor& processorRef;
+    std::bitset<128> uiHeldKeys; // notes held on the on-screen keyboard (message thread only)
 
     // Declaration order matters: relays must exist before the browser is built from them and
     // must outlive it; attachments are created last and destroyed first.

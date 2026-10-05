@@ -62,8 +62,11 @@ void PianoVoice::prepare (double sampleRate, uint32_t seed)
     fs = (float) sampleRate;
     rng.setSeed (seed);
     lfo.reset (seed * 2654435761u + 17u);
-    force.assign (kMaxForce, 0.0f);
-    scratch.assign (kMaxForce, 0.0f);
+    // Room for the slowest felt pulse (~60 ms) plus 1 ms jitter, the 40 ms multipath span and a tail.
+    maxExcitation = (int) std::ceil (0.06f * fs);
+    maxForce = maxExcitation + (int) std::ceil (0.045f * fs) + 2;
+    force.assign ((size_t) maxForce, 0.0f);
+    scratch.assign ((size_t) maxForce, 0.0f);
 
     std::fill (std::begin (re), std::end (re), 0.0f);
     std::fill (std::begin (im), std::end (im), 0.0f);
@@ -139,6 +142,7 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
     const float b3 = 2.6e-7f / decayScale;
     const float afterDecay = 0.22f * (1.0f - 0.3f * d);
     const float afterLevel = (s.softPedal ? 0.5f : 0.32f) * (1.0f + 0.5f * d);
+    const float previousCentre = lastCentre, previousEmphasis = lastEmphasis, previousTilt = lastTilt;
     const float unison = std::max (s.unisonCents, 0.0f) * (k < 32 ? 0.5f : 1.0f) * (0.6f + 0.8f * hash01 ((uint32_t) k, 7));
 
     float normAcc = 0.0f, hissAcc = 0.0f, hammerEnergy = 0.0f;
@@ -204,7 +208,8 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
     const float norm = 1.0f / std::sqrt (std::max (normAcc, 1.0e-9f));
 
     // Reference envelope for fused rain: strikes add energy; it never reads the live string.
-    referenceEnergy = (continuing ? referenceEnergy * env * env : 0.0f) + hammerEnergy * norm * norm;
+    strikeEnergy = hammerEnergy * norm * norm;
+    referenceEnergy = (continuing ? referenceEnergy : 0.0f) + strikeEnergy;
     const float hissNorm = 1.0f / std::sqrt (std::max (hissAcc, 1.0e-9f)); // total steady hiss energy = hissAmp^2
     for (int i = 0; i < m; ++i)
     {
@@ -220,8 +225,16 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
         currentRatio = 1.0f;
         applyPitchRatio (ratio);
     }
-    lastCentre = lastEmphasis = -1.0f;
-    lastTilt = 0.0f;
+    // A re-struck string keeps its wind weighting (same key, same partials): no click.
+    if (continuing && previousCentre >= 0.0f)
+    {
+        updateWeights (previousCentre, previousEmphasis, previousTilt);
+    }
+    else
+    {
+        lastCentre = lastEmphasis = -1.0f;
+        lastTilt = 0.0f;
+    }
 
     //==========================================================================
     // The hammer-string contact, lightning crack and multipath included.
@@ -250,7 +263,7 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
     stealing = false;
     stealGain = 1.0f;
     dampCoef = 1.0f;
-    energy = std::max (energy, 1.0e-6f);
+    energy = std::max ((continuing ? energy : 0.0f) + strikeEnergy, 1.0e-6f);
     active = true;
 }
 
@@ -258,7 +271,6 @@ void PianoVoice::buildForce (const StrikeSettings& s, float kNorm, float corner,
 {
     const float d = distanceFraction;
     const int jitter = (int) (rng.uniform() * 0.001f * fs); // hammers in a chord never land on one sample
-    const int maxExcitation = kMaxForce / 3;
 
     //--------------------------------------------------------------------------
     // e(t): the felt's gamma pulse (the lightning impulse) plus the crack S(t) = A e^(-t/tau) n(t).
@@ -323,7 +335,7 @@ void PianoVoice::buildForce (const StrikeSettings& s, float kNorm, float corner,
     }
 
     const int span = (int) t + 1;
-    forceLength = std::min (kMaxForce, jitter + span + excitationLength + (int) (0.002f * fs));
+    forceLength = std::min (maxForce, jitter + span + excitationLength + (int) (0.002f * fs));
     std::fill (force.begin(), force.begin() + forceLength, 0.0f);
 
     for (int tap = 0; tap < taps && gains[tap] > 0.0f; ++tap)
@@ -351,6 +363,20 @@ void PianoVoice::startDamper() noexcept
     const float t60 = 0.6f * std::pow (0.2f, (float) (std::clamp (key, kLowestKey, kFirstUndampedKey) - kLowestKey) / 68.0f);
     dampCoef = std::exp (-6.91f / (t60 * fs));
     damping = true;
+}
+
+void PianoVoice::kill() noexcept
+{
+    std::fill (std::begin (re), std::end (re), 0.0f);
+    std::fill (std::begin (im), std::end (im), 0.0f);
+    numModes = 0;
+    forceLength = forcePos = 0;
+    active = damping = stealing = false;
+    thump = Thump{};
+    currentRatio = 1.0f;
+    hissAmp = referenceEnergy = 0.0f;
+    energy = level = 0.0f;
+    env = 1.0f;
 }
 
 void PianoVoice::beginSteal() noexcept
@@ -472,7 +498,8 @@ void PianoVoice::controlTick (const WindState& wind, const VoiceWindSettings& ws
     const float lnLocal = std::log (local);
 
     // Wind pitch: an Aeolian tone tracks f ~ U, so the note follows (U_key / U_mean)^depth.
-    const float pitchDepth = fuse * clampf (ws.pitch, 0.0f, 1.0f) * 0.06f;
+    // Stronger wind bends further: the depth grows with the mean wind (full at 8 m/s, x2 at 16).
+    const float pitchDepth = fuse * clampf (ws.pitch, 0.0f, 1.0f) * 0.06f * clampf (wind.meanSpeed / 8.0f, 0.0f, 2.0f);
     const float glide = 1.0f + glideDepth * std::exp (-timeSinceStrike / 0.07f);
     const float ratio = std::exp (pitchDepth * lnLocal) * glide;
 
@@ -501,6 +528,8 @@ void PianoVoice::controlTick (const WindState& wind, const VoiceWindSettings& ws
     for (int i = 0; i < numModes; ++i)
         e += re[i] * re[i] + im[i] * im[i];
     energy = e * env * env;
+    if (forcePos < forceLength)
+        energy = std::max (energy, strikeEnergy); // not yet delivered: don't look stealable
 
     // Reference envelope for the fused rain: decays at the string's slowest rate and with the damper.
     const bool contactOver = forcePos >= forceLength;
@@ -634,7 +663,7 @@ void PianoVoice::render (float* out, int numSamples) noexcept
                 std::fill (std::begin (im), std::end (im), 0.0f);
                 thump = Thump{};
                 forceLength = forcePos = 0;
-                hissAmp = 0.0f;
+                hissAmp = referenceEnergy = energy = 0.0f;
                 return;
             }
             y *= stealGain;

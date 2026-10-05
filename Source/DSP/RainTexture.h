@@ -112,7 +112,7 @@ private:
 
     void spawnGrain (const PendingDrop& drop) noexcept;
 
-    float fs = 48000.0f;
+    float fs = 48000.0f, noiseScale = 1.0f;
     Rng rng;
     Grain grains[kMaxGrains] {};
     int numGrains = 0;

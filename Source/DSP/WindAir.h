@@ -19,6 +19,7 @@ public:
     void prepare (double sampleRate, uint32_t seed)
     {
         fs = (float) sampleRate;
+        noiseScale = std::sqrt (fs / 48000.0f); // keep the roar's level independent of fs
         rng.setSeed (seed);
         roarL.reset(); roarR.reset();
         for (auto& w : whistles) w.reset();
@@ -57,8 +58,8 @@ public:
             if (rg <= 0.0f && wg <= 0.0f)
                 continue;
 
-            roarL.process (rng.bipolar());
-            roarR.process (rng.bipolar());
+            roarL.process (rng.bipolar() * noiseScale);
+            roarR.process (rng.bipolar() * noiseScale);
             float l = roarL.lp * rg;
             float r = roarR.lp * rg;
 
@@ -80,7 +81,7 @@ private:
     static constexpr float kWirePan[kWires]       = { 0.75f, 0.35f, 0.55f };
     static constexpr float kWhistleQ = 28.0f;
 
-    float fs = 48000.0f;
+    float fs = 48000.0f, noiseScale = 1.0f;
     Rng rng;
     Svf roarL, roarR;
     Svf whistles[kWires];

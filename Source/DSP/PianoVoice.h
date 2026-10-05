@@ -64,7 +64,6 @@ public:
     static constexpr int kModesPerPartial = 2;
     static constexpr int kMaxModes        = kMaxPartials * kModesPerPartial;
     static constexpr int kLanes           = 8;
-    static constexpr int kMaxForce        = 16384;
 
     void prepare (double sampleRate, uint32_t seed);
 
@@ -73,6 +72,9 @@ public:
 
     /** Key released with no pedal: lower the damper (keys above F6 have none). */
     void startDamper() noexcept;
+
+    /** Silences the voice at once (all-sound-off). Real-time safe. */
+    void kill() noexcept;
 
     /** Fade out quickly so the voice can be reused (voice stealing). */
     void beginSteal() noexcept;
@@ -144,6 +146,7 @@ private:
 
     // Hammer-string contact: the full excitation force, built at strike time (allocated in prepare).
     std::vector<float> force, scratch;
+    int maxExcitation = 0, maxForce = 0;
     int forceLength = 0, forcePos = 0;
 
     // State
@@ -165,6 +168,7 @@ private:
     // Open-loop reference envelope of the strike (captured after contact, decays at the string's
     // slowest rate). Rain rides on this, never on the live energy, so it cannot sustain itself.
     float referenceEnergy = 0.0f, referenceDecay = 0.0f;
+    float strikeEnergy = 0.0f; // expected energy of the latest strike, until the contact has delivered it
 
     // Wind
     KolmogorovNoise lfo;

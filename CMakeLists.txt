@@ -107,9 +107,10 @@ juce_add_binary_data(PetrichorFrontend
 )
 
 #------------------------------------------------------------------------------
-# Windows needs the WebView2 SDK (NuGet package Microsoft.Web.WebView2) for a modern web view.
+# Windows needs the WebView2 SDK (NuGet package Microsoft.Web.WebView2): the editor serves its page
+# through the web view's resource provider, which only the WebView2 backend supports.
 if(WIN32)
-    option(PETRICHOR_USE_WEBVIEW2 "Use Microsoft WebView2 for the editor on Windows" ON)
+    set(PETRICHOR_USE_WEBVIEW2 TRUE)
 else()
     set(PETRICHOR_USE_WEBVIEW2 FALSE)
 endif()

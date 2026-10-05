@@ -13,7 +13,7 @@ struct Spec
     const char* name;
     const char* unit;
     float min, max, defaultValue;
-    float centre; // value shown at the knob's midpoint (skew); <= min means linear
+    float centre; // value shown at the knob's midpoint (skew); <= min (e.g. -100) means linear
     float EngineParams::* field;
 };
 
@@ -26,7 +26,7 @@ inline const std::array<Spec, 25>& all()
         { "sustain",         "Sustain",         "x",    0.3f,    3.0f,    1.0f,   1.0f,   &EngineParams::sustain },
         { "unison",          "String Detune",   "ct",   0.0f,    4.0f,    1.2f,   0.0f,   &EngineParams::unisonCents },
         { "stereo_width",    "Stereo Width",    "",     0.0f,    1.0f,    0.7f,   0.0f,   &EngineParams::stereoWidth },
-        { "piano_level",     "Piano Level",     "dB",  -24.0f,   6.0f,    0.0f,   0.0f,   &EngineParams::pianoLevelDb },
+        { "piano_level",     "Piano Level",     "dB",  -24.0f,   6.0f,    0.0f, -100.0f,   &EngineParams::pianoLevelDb },
         { "tuning",          "Tuning A4",       "Hz",  415.0f, 466.0f,  440.0f,   0.0f,   &EngineParams::tuningA4Hz },
 
         // Thunder: the hammer-string interaction (always fused)
@@ -54,7 +54,7 @@ inline const std::array<Spec, 25>& all()
         { "rain_follow",     "Piano Follow",    "",      0.0f,    1.0f,    0.6f,   0.0f,   &EngineParams::rainFollow },
 
         // Master
-        { "master",          "Master",          "dB",  -24.0f,   6.0f,   -2.0f,   0.0f,   &EngineParams::masterDb },
+        { "master",          "Master",          "dB",  -24.0f,   6.0f,   -2.0f, -100.0f,   &EngineParams::masterDb },
     } };
     return specs;
 }
@@ -76,15 +76,16 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         const juce::String unit (s.unit);
         auto toText = [unit, s] (float v, int)
         {
-            const bool percent = unit.isEmpty();
-            if (percent)
+            if (unit.isEmpty())
                 return juce::String (juce::roundToInt (v * 100.0f)) + " %";
-            const int decimals = (s.max - s.min) <= 5.0f ? 2 : ((s.max - s.min) <= 50.0f ? 1 : 0);
-            return juce::String (v, decimals) + " " + unit;
+            const float width = s.max - s.min;
+            const int decimals = width <= 5.0f ? 2 : (width <= 100.0f ? 1 : 0);
+            const auto number = decimals == 0 ? juce::String (juce::roundToInt (v)) : juce::String (v, decimals);
+            return number + " " + unit;
         };
         auto fromText = [unit] (const juce::String& text)
         {
-            const float v = text.retainCharacters ("-0123456789.").getFloatValue();
+            const float v = text.trim().getFloatValue(); // keeps sign and exponent, stops at the unit
             return unit.isEmpty() ? v / 100.0f : v;
         };
 
