@@ -155,7 +155,7 @@ void windOverlayToFuse (const std::string& dir)
     p.windSpeedMs = 14.0f;
     p.turbulence = 0.7f;
     p.gustLengthM = 6.0f;
-    p.windPitch = 0.6f;
+    p.windPitch = 0.4f;
     p.windTimbre = 0.7f;
     p.windAir = 0.45f;
     p.rainLevel = 0.0f;
