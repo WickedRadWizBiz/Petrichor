@@ -76,8 +76,8 @@ FetchContent_MakeAvailable(JUCE)
 set(FRONTEND_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/frontend)
 set(FRONTEND_HTML ${FRONTEND_DIR}/dist/index.html)
 
-file(GLOB_RECURSE FRONTEND_SOURCES CONFIGURE_DEPENDS
-    ${FRONTEND_DIR}/src/*
+file(GLOB_RECURSE FRONTEND_SOURCES CONFIGURE_DEPENDS ${FRONTEND_DIR}/src/*)
+list(APPEND FRONTEND_SOURCES
     ${FRONTEND_DIR}/index.html
     ${FRONTEND_DIR}/package.json
     ${FRONTEND_DIR}/vite.config.js
@@ -89,7 +89,7 @@ find_program(NPM_EXECUTABLE NAMES npm npm.cmd)
 if(NPM_EXECUTABLE)
     add_custom_command(
         OUTPUT  ${FRONTEND_HTML}
-        COMMAND ${CMAKE_COMMAND} -E env "NODE_ENV=production" ${NPM_EXECUTABLE} ci --no-audit --no-fund
+        COMMAND ${NPM_EXECUTABLE} ci --include=dev --no-audit --no-fund
         COMMAND ${NPM_EXECUTABLE} run build
         WORKING_DIRECTORY ${FRONTEND_DIR}
         DEPENDS ${FRONTEND_SOURCES} ${FRONTEND_DIR}/package-lock.json
@@ -132,6 +132,8 @@ juce_add_plugin(PetrichorPiano
     AU_MAIN_TYPE                kAudioUnitType_MusicDevice
     FORMATS                     VST3 AU Standalone
 )
+
+juce_generate_juce_header(PetrichorPiano)
 
 target_sources(PetrichorPiano PRIVATE
     Source/Plugin/Parameters.h
