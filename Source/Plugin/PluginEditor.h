@@ -25,6 +25,7 @@ public:
 private:
     void timerCallback() override;
     juce::WebBrowserComponent::Options createWebOptions();
+    static juce::String pageUrl();
     std::optional<juce::WebBrowserComponent::Resource> getResource (const juce::String& url) const;
 
     PetrichorAudioProcessor& processorRef;

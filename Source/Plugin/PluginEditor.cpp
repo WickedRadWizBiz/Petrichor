@@ -34,7 +34,7 @@ PetrichorAudioProcessorEditor::PetrichorAudioProcessorEditor (PetrichorAudioProc
     }
 
     addAndMakeVisible (webView);
-    webView.goToURL (juce::WebBrowserComponent::getResourceProviderRoot());
+    webView.goToURL (pageUrl());
 
     setResizable (true, true);
     setResizeLimits (900, 600, 2000, 1400);
@@ -89,6 +89,33 @@ juce::WebBrowserComponent::Options PetrichorAudioProcessorEditor::createWebOptio
         options = options.withOptionsFrom (*relay);
 
     return options;
+}
+
+juce::String PetrichorAudioProcessorEditor::pageUrl()
+{
+   #if JUCE_LINUX
+    // JUCE 8's Linux web view relays resource-provider responses to its WebKit helper process
+    // through a pipe as JSON, and the helper drops messages that arrive in pieces. The ~1.4 MB
+    // encoded page does, which crashes the helper. So on Linux the bundled page is written once to
+    // a cache file (named by content hash) and loaded from disk; native integration still works.
+    const auto bytes = juce::MemoryBlock (PetrichorFrontend::index_html, (size_t) PetrichorFrontend::index_htmlSize);
+    const auto hash = juce::String::toHexString ((juce::int64) juce::DefaultHashFunctions::generateHash (
+        juce::String::fromUTF8 (PetrichorFrontend::index_html, PetrichorFrontend::index_htmlSize), std::numeric_limits<int>::max()));
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("PetrichorPiano")
+                          .getChildFile ("ui-" + hash + ".html");
+
+    if (file.getSize() != (juce::int64) bytes.getSize())
+    {
+        file.getParentDirectory().createDirectory();
+        file.replaceWithData (bytes.getData(), bytes.getSize());
+    }
+
+    if (file.existsAsFile())
+        return juce::URL (file).toString (false);
+   #endif
+
+    return juce::WebBrowserComponent::getResourceProviderRoot();
 }
 
 std::optional<juce::WebBrowserComponent::Resource> PetrichorAudioProcessorEditor::getResource (const juce::String& url) const

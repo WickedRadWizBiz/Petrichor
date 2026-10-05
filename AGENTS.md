@@ -23,7 +23,7 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 5. **Treat `Source/Plugin/Parameters.h` as the single source of truth for parameters.** It defines ids, names, ranges, defaults and skew centres. `frontend/src/params.js` must mirror it exactly. A parameter id is a saved-state and automation key (`ParameterID{id, 1}`), so never rename or reuse one.
 6. **Run the engine tests before committing.** The suite must report `0 failures`.
 7. **Listen and measure with `PetrichorRender`.** Render the demos before and after any change that affects sound. Renders are deterministic, so you can diff them.
-8. **Keep loudness calibrated.** After any change that affects level, run `PetrichorRender --calibrate`. The current per-key profile at V = 80 is flat at about −32 ± 1 dB from A0 to C8. The trim lives in `keyLoudnessTrim()` in `PianoVoice.cpp`. The master stage has a soft knee above 0.8, and the stability test requires peak ≤ 1.0.
+8. **Keep loudness calibrated.** After any change that affects level, run `PetrichorRender --calibrate`. The current per-key profile at V = 80 is flat at about −32 ± 1.5 dB from A0 to C8. The trim lives in `keyLoudnessTrim()` in `PianoVoice.cpp`. The master stage has a soft knee above 0.8, and the stability test requires peak ≤ 1.0.
 
 ## 2. Engine conventions
 
