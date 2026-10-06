@@ -98,11 +98,29 @@ public:
 private:
     struct Grain
     {
-        float noiseEnv, noiseDecay, audible, sign;
-        Svf   resonator;
+        // Envelope = decay - attack (a difference of exponentials): it swells in over ~0.25 ms
+        // instead of switching on, which is what made the old grains click like gravel.
+        float decayEnv, attackEnv, decayMul, attackMul;
+        float audible, sign, patterGain;
+        Svf   body;                    // the struck surface's "pat"
+        OnePoleLP tick1, tick2;        // the impact's noise, darkened by distance
+        float bodyMix, tickMix;
         float gainL, gainR;
-        float bubblePhase, bubbleInc, bubbleChirp, bubbleEnv, bubbleDecay;
+        float bubblePhase, bubbleInc, bubbleChirp, bubbleEnv, bubbleAttack, bubbleDecay, bubbleAttackMul;
         int   samplesLeft;
+    };
+
+    /** Pink-ish noise (Paul Kellet's economy filter) for the distant-rain bed. */
+    struct Pinker
+    {
+        float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+        float process (float white) noexcept
+        {
+            b0 = 0.99765f * b0 + white * 0.0990460f;
+            b1 = 0.96300f * b1 + white * 0.2965164f;
+            b2 = 0.57000f * b2 + white * 1.0526913f;
+            return (b0 + b1 + b2 + white * 0.1848f) * 0.25f;
+        }
     };
 
     struct PendingDrop
@@ -131,6 +149,7 @@ private:
     float fusedHiss = 0.0f, patterDepth = 0.0f, fusedDropGain = 0.0f;
 
     // Diffuse hiss bed of the overlay layer (decorrelated left / right).
+    Pinker pinkL, pinkR;
     Svf hissL, hissR;
     OnePoleHP hissHpL, hissHpR;
     Ramp hissGain;

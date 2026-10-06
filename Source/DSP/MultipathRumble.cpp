@@ -127,7 +127,7 @@ void MultipathRumble::process (const float* const* zoneInputs, float* left, floa
     constexpr float householder = 2.0f / (float) kLines;
     constexpr float lineOutGain = 0.5f;
     // Output trims so a distant strike's roll sits close to the level of its direct sound.
-    constexpr float zoneGain[kZones] = { 0.9f, 1.5f, 2.8f };
+    constexpr float zoneGain[kZones] = { 0.6f, 0.9f, 1.5f };
 
     for (int z = 0; z < kZones; ++z)
     {

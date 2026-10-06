@@ -38,15 +38,15 @@ export const PARAMS = [
     desc: "Reference pitch: every string is tuned relative to A4." },
 
   // Thunder
-  { id: "storm_distance", name: "Storm Distance", short: "Distance", unit: "m", min: 50, max: 4000, def: 1200, centre: 800, group: "thunder",
+  { id: "storm_distance", name: "Storm Distance", short: "Distance", unit: "m", min: 50, max: 4000, def: 600, centre: 800, group: "thunder",
     desc: "Where the softest strike (V = 1) lands: x = D\u00B7(127 \u2212 V)/126, so hard hits land overhead." },
-  { id: "crack_level", name: "Crack", short: "Crack", unit: "", min: 0, max: 1, def: 0.5, centre: 0, group: "thunder",
+  { id: "crack_level", name: "Crack", short: "Crack", unit: "", min: 0, max: 1, def: 0.3, centre: 0, group: "thunder",
     desc: "Broadband crack inside the hammer's force, S(t) = A e^(−t/τ) n(t). Heard only through the string's partials; harder strikes crack more." },
-  { id: "air_absorption", name: "Air Absorption", short: "Air Abs.", unit: "", min: 0, max: 1, def: 0.5, centre: 0, group: "thunder",
+  { id: "air_absorption", name: "Air Absorption", short: "Air Abs.", unit: "", min: 0, max: 1, def: 0.35, centre: 0, group: "thunder",
     desc: "How strongly distance darkens the strike: every partial's excitation is weighted by e^(−α(f)·x), α ∝ f²." },
-  { id: "rumble_mix", name: "Rumble", short: "Rumble", unit: "", min: 0, max: 1, def: 0.35, centre: 0, group: "thunder",
+  { id: "rumble_mix", name: "Rumble", short: "Rumble", unit: "", min: 0, max: 1, def: 0.2, centre: 0, group: "thunder",
     desc: "Multipath: distant strikes roll through several delayed, darker re-contacts of hammer and string, and drive the body's rumble harder." },
-  { id: "rumble_decay", name: "Rumble Decay", short: "Decay", unit: "s", min: 0.5, max: 12, def: 5, centre: 4, group: "thunder",
+  { id: "rumble_decay", name: "Rumble Decay", short: "Decay", unit: "s", min: 0.5, max: 12, def: 3.5, centre: 4, group: "thunder",
     desc: "Ring of the body rumble the strings drive; distant strikes send more into its longest zone." },
 
   // Wind

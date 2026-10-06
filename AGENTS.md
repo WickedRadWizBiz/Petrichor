@@ -23,7 +23,7 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 5. **Treat `Source/Plugin/Parameters.h` as the single source of truth for parameters.** It defines ids, names, ranges, defaults and skew centres. `frontend/src/params.js` must mirror it exactly. A parameter id is a saved-state and automation key (`ParameterID{id, 1}`), so never rename or reuse one.
 6. **Run the engine tests before committing.** The suite must report `0 failures`.
 7. **Listen and measure with `PetrichorRender`.** Render the demos before and after any change that affects sound. Renders are deterministic, so you can diff them.
-8. **Keep loudness calibrated.** After any change that affects level, run `PetrichorRender --calibrate`. The current per-key profile at V = 80 is flat at about −32 ± 1.5 dB from A0 to C8. The trim lives in `keyLoudnessTrim()` in `PianoVoice.cpp`. The master stage has a soft knee above 0.8, and the stability test requires peak ≤ 1.0.
+8. **Keep loudness calibrated.** After any change that affects level, run `PetrichorRender --calibrate`. The current per-key profile at V = 80 is flat at about −32 ± 1.5 dB from A0 to C8 for Piano I (`--calibrate 0`); Piano II (`--calibrate 1`) is deliberately trimmed by ear toward the treble (about −32 dB at C4, −38 dB at C8). The trim lives in `keyLoudnessTrim()` in `PianoVoice.cpp`. The master stage has a soft knee above 0.8, and the stability test requires peak ≤ 1.0.
 
 ## 2. Engine conventions
 
@@ -58,8 +58,9 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 | Landing diameter | $p(D)\propto N(D)v_T(D)$ | inverse CDF plus rejection on $v_T/9.3$ | `atmos::sampleImpactDiameter` |
 | Rain–wind coupling | $R=R_0(1+\min(\bar U/8,1)(g-1))^{3c}$ | smoothed, τ 0.25 s | `RainTexture::controlTick` |
 | Rain overlay follow | $F=(1-\phi)+\phi\min(e,1.5)$; spectra lean to $f_\mathrm{piano}$ by $0.5\phi\min(e,1)$ | e = piano RMS / 0.04 (10/300 ms) | `PetrichorEngine::controlTick`, `RainTexture` |
-| Rain fuse | drops: $a=s_d\sqrt{P/\lambda_g}$, $P=2\varphi\ell\min(\rho,2)$; hiss $h=0.3\varphi\ell\min(\rho,2)$; patter AM $1+1.5\varphi\ell p$ (0.3–1.7) | all × open-loop $E_\mathrm{ref}$ | `landDrops`, `PianoVoice::rainDrop/controlTick`, `renderBlock` |
-| Grain | $f_c=700v^{0.75}$, $A\propto[(D/2)^{1.5}v/6.5]^{0.7}$, $\tau$=0.4+1.6D ms | band-pass Q 1.3, centre ×0.8 to ×1.2 | `RainTexture::spawnGrain` |
+| Rain fuse | drops: $a=s_d\sqrt{P/\lambda_g}$, $P=2\varphi\ell\min(\rho,2)$; hiss $h=0.3\varphi\ell\min(\rho,2)$; patter AM $1+1.5\varphi\ell p$ (0.3–1.7) | all × open-loop $E_\mathrm{ref}$; drops band-pass Q 0.6 at 0.3 × impact centre, roll-off above 2.5 kHz; hiss weights HP 300 Hz × 2nd-order LP 2 kHz (warm partials, not glassy) | `landDrops`, `PianoVoice::rainDrop/controlTick`, `renderBlock` |
+| Grain | $r=\sqrt{r_0^2+u(r_1^2-r_0^2)}$; $A\propto[(D/2)^{1.5}v/6.5]^{0.7}\min(1,0.8/r)$; $e=A(e^{-t/\tau}-e^{-t/0.25\,\mathrm{ms}})$, $\tau$=0.8+1.8D ms | r 0.4–15 m; body SVF Q 2 at $500(1/D)^{0.4}$ Hz (0.8); tick 2× one-pole at $\min(1200v^{0.7}, 16k/(1+r/1.5))$; bubbles only r < 5 m | `RainTexture::spawnGrain` |
+| Rain bed | $(0.5\,\mathrm{pink}+0.15\,\mathrm{white})$ → LP $1500\bar v^{0.65}$ Hz (Q 0.6) → HP 120 Hz | gain $0.025\sqrt{\lambda_g/200}\sqrt{\bar v/4}$; rain × $3.15\ell^{1.5}$ | `RainTexture::controlTick/render` |
 | Minnaert bubble | $f=3.26/a$ | a = 0.25 to 0.6 D; P = surface × (0.45 if D > 1 mm, else 0.1) | `atmos::minnaertFrequency` |
 | Kolmogorov noise | $\lvert H\rvert^2\propto f^{-5/3}$ above $f_c$ | 3 pole/zero pairs plus a pole at 12 fc; 128 steps per corner-Hz; time-warped and Hermite-interpolated | `KolmogorovNoise` |
 | Storm gusts | $U(t)=\bar U(1+IG)$, corner $\bar U/(8.41L_u)$ | I = 0.6 × turbulence; mean glide τ 0.35 s | `atmos::vonKarmanCornerHz`, `StormWind::tick` |
@@ -68,15 +69,15 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 | Wind timbre (fuse) | per-mode weight, Q 1.6, centre $4f_1\,2^{1.2s(0.55\ell+0.45G)}$, tilt $(f/f_1)^{1.5\,\mathrm{timbre}\,\varphi_w\ln(U_\mathrm{key}/\bar U)}$ | ±15 % swell; tilt ±0.6 | `PianoVoice::updateWeights` |
 | Aeolian wires | $f=St\,U/D_w$ | Dw 2.5, 4.0, 6.5 mm; Q 28; fade-in from 3 to 10 m/s | `WindAir` |
 | Velocity → distance | $x=x_{max}(127-V)/126$ | $x_{max}$ = `storm_distance` | `atmos::velocityToDistance` |
-| Crack (in the force) | $S=Ae^{-t/\tau}n(t)$, $A=0.35\,\mathrm{crack}\,v^{2.5}/\sqrt{\tau f_s/2}$ | τ 10 → 4 ms; only a 70–160 Hz knock is heard directly | `PianoVoice::buildForce` |
-| Multipath contact | $F=(F_\mathrm{felt}+S)*\sum_k g_k\mathrm{LP}_k\delta(t-t_k)$ | $K=1+\mathrm{round}(7\mu)$, $\mu=d\cdot$rumble; spacing $(\beta/f_1+4\,\mathrm{ms}\,\mu)U(0.6,1.4)$, ≤ 40 ms | `PianoVoice::buildForce` |
+| Crack (in the force) | $S=Ae^{-t/\tau}n(t)$, $A=0.2(1-0.9c)\,\mathrm{crack}\,v^{2.5}/\sqrt{\tau f_s/2}$ | τ 10 → 4 ms; only a 70–160 Hz knock ($0.3(1-0.6c)\,\mathrm{crack}\,v$) is heard directly | `PianoVoice::buildForce` |
+| Multipath contact | $F=(F_\mathrm{felt}+S)*\sum_k g_k\mathrm{LP}_k\delta(t-t_k)$ | $K=1+\mathrm{round}(4\mu)$, $\mu=d\cdot$rumble; spacing $(\beta/f_1+2\,\mathrm{ms}\,\mu)U(0.6,1.4)$, ≤ 20 ms; gain ratio $0.4+0.25\mu$ | `PianoVoice::buildForce` |
 | Absorption | $e^{-\alpha(f_n)xa}$ on every partial's drive, $\alpha=\alpha_{1k}(f/1k)^2$ | α1k = 4.6e-4 Np/m; a = `air_absorption` | `atmos::absorptionGain`, `PianoVoice::strike` |
-| Rumble | $R=\int S(t-\tau)h(\tau,t)d\tau$ | 3 zones × (12 rolling taps + 8-line Householder FDN); RT60 near max(0.25, 0.15T), mid 0.45T, far T | `MultipathRumble` |
-| Rumble send | send $=\mathrm{mix}(0.12+0.88d)$, triangular equal-power zone weights | $d=(127-V)/126$ | `PetrichorEngine::renderBlock`, `MultipathRumble::zoneWeights` |
+| Rumble | $R=\int S(t-\tau)h(\tau,t)d\tau$ | 3 zones × (12 rolling taps + 8-line Householder FDN); RT60 near max(0.25, 0.15T), mid 0.45T, far T; trims 0.6 / 0.9 / 1.5 | `MultipathRumble` |
+| Rumble send | send $=\mathrm{mix}(0.06+0.44d)$, triangular equal-power zone weights | $d=(127-V)/126$ | `PetrichorEngine::renderBlock`, `MultipathRumble::zoneWeights` |
 | Stiff string | $f_n=nf_0\sqrt{1+Bn^2}$ | B 3e-4 (A0) → 1e-4 (A2) → 8e-3 (C8); Railsback stretch | `PianoVoice::inharmonicity`, `stretchCents` |
 | String loss | $\sigma_n=\sigma_1+b_3f_n^2$ | T60 = 14 s × 0.045^(k−21)/87; b3 2.6e-7; aftersound 0.22σ at level 0.32 | `PianoVoice::promptT60`, `strike` |
-| Hammer | $F\propto t^{\kappa-1}e^{-t/\theta}$ | speed 0.35·17^v m/s; corner 580 Hz (C4, mf, h = 0.5) → 2.5 kHz tip at II; κ = 2.6 − 0.9v → 2; 0 to 1 ms jitter | `PianoVoice::strike`, `buildForce` |
-| Piano I ↔ II | $f_n=f^{\mathrm I}_n(f^{\mathrm{II}}_n/f^{\mathrm I}_n)^c$, $g_n=(1-c)\hat g^{\mathrm I}_n+c\hat g^{\mathrm{II}}_n$, $\sigma_n$ geometric | II: $\hat g\propto b^{n-1}/\sqrt n$, $b=0.16+0.5v^{1.5}+0.12(1-k_n)$; bell 6.9 f1, T60 0.35 s; tine T60 10 s·0.25^k | `PianoVoice::strike` |
+| Hammer | $F\propto t^{\kappa-1}e^{-t/\theta}$ | speed 0.35·17^v m/s; corner 580 Hz (C4, mf, h = 0.5) → 1.8 kHz tip at II; κ = 2.6 − 0.9v → 2.4; 0 to 1 ms jitter | `PianoVoice::strike`, `buildForce` |
+| Piano I ↔ II | $f_n=f^{\mathrm I}_n(f^{\mathrm{II}}_n/f^{\mathrm I}_n)^c$, $g_n=(1-c)\hat g^{\mathrm I}_n+c\hat g^{\mathrm{II}}_n$, $\sigma_n$ geometric | II: $\hat g\propto b^{n-1}/\sqrt n\,(1+(nf_1/2\mathrm k)^2)^{-1/2}$, $b=(0.16+0.5v^{1.5}+0.12(1-k_n))(1-0.45k_n)$; bell 6.9 f1, T60 0.35 s, level $(0.1+0.22v)(1-0.75k_n)/\sqrt{1+(6.9f_1/3.5\mathrm k)^2}$; tine T60 10 s·0.25^k; tip 1.8 kHz·2^{0.15(k−60)/12}, order 2.4; onset τ $c(0.8+3.5k_n)$ ms; trim +9 → −10 dB | `PianoVoice::strike` |
 | Sympathetic resonance | 24 tuned combs A1–G♯3, loss LP 2.6 kHz | RT60 0.5 s (pedal up) → 3.5 s (down); gain 0.2 × resonance × (1 − c) | `SympatheticResonance` |
 
 ## 4. IPC contract (frontend ↔ backend)

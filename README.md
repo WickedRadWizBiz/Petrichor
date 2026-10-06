@@ -45,7 +45,7 @@ Wind and Rain each have an **Overlay ↔ Fuse** slider. The blend is equal-power
  |   |      fused wind: pitch (U_key/U)^depth, brightness tilt, band-pass weights            |
  |   |      fused rain: drop impulses + hiss into the modes (open-loop strike reference)     |
  |   |        +-- equal-power key pan (bass left) -----------------------> piano bus         |
- |   |        +-- send = mix (0.12 + 0.88 d) x zone weights(d) --+                           |
+ |   |        +-- send = mix (0.06 + 0.44 d) x zone weights(d) --+                           |
  |   +--> RainTexture.render   overlay grains (+ piano follow) -> dry bus; patter signal     |
  |   |      piano bus x (1 + depth * patter)  (fused rain AM) ---------------> dry bus       |
  |   +--> WindAir              overlay: roar ~ U^2, Aeolian wire whistles at St U / D        |
@@ -138,15 +138,19 @@ The spec links rainfall rate to the absolute amplitude of the wind LFO. $g(t)$ i
 #### Impact grains
 
 $$
-f_c = 700\ \mathrm{Hz}\cdot \lvert\mathbf v\rvert^{0.75}, \qquad
-A \propto \Bigl[(D/2)^{1.5}\,\tfrac{\lvert\mathbf v\rvert}{6.5}\Bigr]^{0.7}, \qquad
-\tau = 0.4\ \mathrm{ms} + 1.6\ \tfrac{\mathrm{ms}}{\mathrm{mm}}\, D
+r = \sqrt{r_0^2 + u\,(r_1^2 - r_0^2)}, \qquad
+A \propto \Bigl[(D/2)^{1.5}\,\tfrac{\lvert\mathbf v\rvert}{6.5}\Bigr]^{0.7} \min\!\Bigl(1, \frac{0.8\ \mathrm{m}}{r}\Bigr), \qquad
+e(t) = A\,\bigl(e^{-t/\tau} - e^{-t/0.25\,\mathrm{ms}}\bigr), \quad \tau = 0.8\ \mathrm{ms} + 1.8\ \tfrac{\mathrm{ms}}{\mathrm{mm}}\, D
 $$
 
-Each grain is a burst of band-limited noise. Kinetic energy grows as $D^3 v^2$, so the amplitude goes as $D^{1.5} v$, compressed by the 0.7 power so the texture stays audible.
+Each drop lands somewhere on the ground around the listener, uniformly by area ($p(r) \propto r$, $r_0$ = 0.4 m to $r_1$ = 15 m), so most drops are far away, quiet and dull, and only a few land close enough to be heard as individual "pats" (after Farnell, *Designing Sound*). Kinetic energy grows as $D^3 v^2$, so the amplitude goes as $D^{1.5} v$, compressed by the 0.7 power. The envelope is a difference of exponentials: it swells in over about 0.25 ms instead of switching on, which is what made earlier grains click like gravel on glass.
 
-- **Code:** `impactCentreHz()` and `RainTexture::spawnGrain()`. Each grain passes noise through a TPT state-variable band-pass with Q = 1.3. The centre is jittered by ×0.8 to ×1.2 and clamped to the range 200 Hz to 0.42 fs. Each grain lasts 9.2 τ, which is -80 dB.
-- **Sound:** the centre is about 1.2 kHz for 2 m/s drizzle, 2.9 kHz for a 2 mm drop in still air, and 5.6 kHz for rain driven at 16 m/s.
+- **Code:** `impactCentreHz()` and `RainTexture::spawnGrain()`. Each grain is noise shaped two ways and summed:
+  - **Body** (0.8): the struck surface's soft "pat", a state-variable band-pass (Q 2) at $500\,\mathrm{Hz}\cdot(1\,\mathrm{mm}/D)^{0.4}$, jittered ×0.8 to ×1.25: lower for bigger drops.
+  - **Tick** ($0.45\,\mathrm{clamp}(\lvert\mathbf v\rvert/6.5, 0.1, 2.5)^{0.8}$): the impact's own noise through two one-pole low-passes at $\min(1200\,\lvert\mathbf v\rvert^{0.7},\ 16\,\mathrm{kHz}/(1 + r/1.5\,\mathrm m))$: brighter for faster drops, darker the farther away.
+  
+  A grain lasts $9.2\,\tau + 4$ ms. `impactCentreHz()` ($700\,\lvert\mathbf v\rvert^{0.75}$ Hz) still sets each drop event's spectral centre for the fused path.
+- **Sound:** the centre is about 1.2 kHz for 2 m/s drizzle, 2.9 kHz for a 2 mm drop in still air, and 5.6 kHz for rain driven at 16 m/s. Compared with the old band-passed clicks, at 8 mm/h in a 6 m/s wind the overlay's spectral centroid fell from 5.0 to 2.0 kHz, the share above 4 kHz from 64 % to 10 %, and the fraction of 1 ms frames louder than three times the RMS (clicks) from 2.7 % to 0.26 %.
 
 #### Minnaert bubbles (beyond the spec)
 
@@ -156,11 +160,11 @@ $$
 
 A drop landing in standing water can trap an air bubble, which rings at its Minnaert resonance. Here $a$ is the bubble radius in metres.
 
-- **Code:** `atmos::minnaertFrequency()` and `RainTexture::spawnGrain()`. A grain gets a bubble with probability `rain_surface` × 0.45 for drops larger than 1 mm, or `rain_surface` × 0.1 for smaller drops. The bubble radius is 0.25 to 0.6 × D, its decay is $\tau_b = 8\ \mathrm{ms}\sqrt{2000/f}$, and its pitch chirps upward by 15 to 35 % over $4\tau_b$. A bubble of radius 1 mm rings at 3.26 kHz.
+- **Code:** `atmos::minnaertFrequency()` and `RainTexture::spawnGrain()`. A drop landing within 5 m gets a bubble with probability `rain_surface` × 0.45 if it is larger than 1 mm, or `rain_surface` × 0.1 if smaller. The bubble swells in over 0.5 ms. The bubble radius is 0.25 to 0.6 × D, its decay is $\tau_b = 8\ \mathrm{ms}\sqrt{2000/f}$, and its pitch chirps upward by 15 to 35 % over $4\tau_b$. A bubble of radius 1 mm rings at 3.26 kHz.
 
 #### Hiss bed
 
-Under the overlay grains sits a diffuse, decorrelated stereo hiss: noise through a state-variable low-pass (Q = 0.6) at $0.45\, f_c(\bar v)$, where $\bar v$ is the mean impact speed, followed by a 150 Hz high-pass. Its gain is $0.010\sqrt{\lambda_g/200}\,\sqrt{\bar v/4}$. A lull therefore gives a quiet, dark hiss and a gust a wide, bright one. The rain is scaled by $0.9\,\ell^{1.5}$, where $\ell$ is `rain_level`. Noise is scaled by $\sqrt{f_s/48\,\mathrm{kHz}}$ so levels do not depend on the sample rate. The code is in `RainTexture::controlTick()` and `RainTexture::render()`.
+Under the overlay grains sits the distant-rain bed, thousands of far drops merged into one diffuse, decorrelated stereo wash. It carries most of the sound of rain, about 10 dB above the near drops. Its noise is tilted between pink and white (about −1.5 dB/octave: half a Kellet pink filter plus 0.15 white), passed through a state-variable low-pass (Q = 0.6) at $1500\,\bar v^{0.65}$ Hz, where $\bar v$ is the mean impact speed, and then a 120 Hz high-pass. Its gain is $0.025\sqrt{\lambda_g/200}\,\sqrt{\bar v/4}$. A lull therefore gives a quiet, dark hiss and a gust a wide, bright one. The rain is scaled by $3.15\,\ell^{1.5}$, where $\ell$ is `rain_level`. Noise is scaled by $\sqrt{f_s/48\,\mathrm{kHz}}$ so levels do not depend on the sample rate. The code is in `RainTexture::controlTick()` and `RainTexture::render()`.
 
 #### Overlay: following the piano
 
@@ -177,8 +181,8 @@ With $\phi$ = `rain_follow`, the follow factor is $F = (1 - \phi) + \phi\, \min(
 
 With fuse amount $\varphi = \sin(b\pi/2)$ and texture amount $\ell$, the same drop stream acts on the piano itself:
 
-- **Drops on strings** (`PetrichorEngine::landDrops()`, `PianoVoice::rainDrop()`): each drop lands on one ringing string, chosen at random with probability $\propto \sqrt{E}$, and adds an impulse to its modes shaped by the drop's impact spectrum, a band-pass (Q 0.8) at the drop's centre frequency applied to the mode drive. The impulse adds $a^2 E_\mathrm{ref}$ of energy with $a = s_d \sqrt{P / \lambda_g}$, where $s_d = \sqrt{\min(A_d / 0.12, 6.25)}$ is the compressed drop strength and $P = 2\,\varphi\,\ell\,\min(\rho, 2)$ is the injected power per second ($\rho$ the drop-density factor). More rain means more, smaller taps rather than a louder texture.
-- **Hiss excitation** (`PianoVoice::controlTick()`): once per control period every mode receives a random-amplitude impulse; scaled by $\sqrt{1 - \rho_m^2}$ per mode, this is white noise that settles each mode at a level set by its drive, so the strings sing a rain hiss in their own partials. The total steady hiss energy is $h^2 E_\mathrm{ref}$ with $h = 0.3\,\varphi\,\ell\,\min(\rho, 2)$.
+- **Drops on strings** (`PetrichorEngine::landDrops()`, `PianoVoice::rainDrop()`): each drop lands on one ringing string, chosen at random with probability $\propto \sqrt{E}$, and adds an impulse to its modes shaped by the drop's impact spectrum: a band-pass (Q 0.6) at 0.3 × the drop's centre frequency (about 1 kHz), times a second-order roll-off above 2.5 kHz, applied to the mode drive. A drop is a soft impactor, so it taps the string's warm partials instead of pinging the top ones. The impulse adds $a^2 E_\mathrm{ref}$ of energy with $a = s_d \sqrt{P / \lambda_g}$, where $s_d = \sqrt{\min(A_d / 0.12, 6.25)}$ is the compressed drop strength and $P = 2\,\varphi\,\ell\,\min(\rho, 2)$ is the injected power per second ($\rho$ the drop-density factor). More rain means more, smaller taps rather than a louder texture.
+- **Hiss excitation** (`PianoVoice::controlTick()`): once per control period every mode receives a random-amplitude impulse; scaled by $\sqrt{1 - \rho_m^2}$ per mode, this is white noise that settles each mode at a level set by its drive, so the strings sing a rain hiss in their own partials. The hiss weights the modes by a high-pass at 300 Hz and a second-order low-pass at 2 kHz. The total steady hiss energy is $h^2 E_\mathrm{ref}$ with $h = 0.3\,\varphi\,\ell\,\min(\rho, 2)$.
 - **Patter modulation** (`PetrichorEngine::renderBlock()`): the piano bus is multiplied by $\mathrm{clamp}(1 + 1.5\,\varphi\,\ell\, p(t), 0.3, 1.7)$, where $p(t)$ is the sum of the drops' compressed impact envelopes with random polarity, panned like the drops.
 - **Why it cannot run away:** $E_\mathrm{ref}$ is an open-loop reference, the energy the hammer is expected to deliver ($\sum_m (\mathrm{drive}_m \lvert F(f_m)\rvert)^2$, computed analytically at the strike), decaying at the string's slowest rate and with the damper. An earlier version scaled the texture by the string's live energy; texture then fed on itself and grew without bound. Fused rain is silent when no string sounds.
 
@@ -283,7 +287,7 @@ $$
 x = x_\mathrm{max}\, \frac{127 - V}{126}, \qquad d = \frac{127 - V}{126} \in [0, 1]
 $$
 
-$V$ = 127 is overhead (0 m) and $V$ = 1 is at `storm_distance` ($x_\mathrm{max}$, 1200 m by default). **Code:** `atmos::velocityToDistance()`, called from `PianoVoice::strike()`.
+$V$ = 127 is overhead (0 m) and $V$ = 1 is at `storm_distance` ($x_\mathrm{max}$, 600 m by default). **Code:** `atmos::velocityToDistance()`, called from `PianoVoice::strike()`.
 
 #### The strike: crack and multipath in the hammer-string contact
 
@@ -294,9 +298,9 @@ $$
 
 Thunder is not a separate sound. The lightning impulse is the hammer, and everything the spec describes for the strike happens in the force the string receives (`PianoVoice::buildForce()`):
 
-- **Crack:** $n(t)$ is unit-variance white noise and $\tau$ runs from 10 ms at A0 to 4 ms at C8. $A = 0.35 \cdot$ `crack_level` $\cdot\, v^{2.5} / \sqrt{\tau f_s/2}$, so harder strikes crack disproportionately more and the crack sits about 10 dB under the felt pulse's low-frequency content at full velocity. It is heard only through the string: the tests check that 99 % of a crack-only strike's energy lies on the string's partials.
-- **Multipath:** the felt pulse returns from the near termination after one round trip, $t_\mathrm{rt} = \beta / f_1$, and re-contacts the hammer. With depth $\mu = d\,\cdot$ `rumble_mix`, $K = 1 + \mathrm{round}(7\mu)$ contacts are spaced by $(t_\mathrm{rt} + 4\ \mathrm{ms}\cdot\mu)\times U(0.6, 1.4)$ (the time-varying delay distribution, re-drawn every strike, capped at 40 ms), with gains falling by $0.55 + 0.3\mu$ per contact, normalised to unit sum, and each later contact darker (one-pole at $6 f_h/(1 + 0.9k)$). A close strike is one localised contact; a distant one rolls: the tests measure 1 contact over 1.3 ms at $V$ = 127 and 5 contacts over 37 ms at $V$ = 25.
-- **Knock:** the only part heard directly is a soundboard knock, a decaying sinusoid at 70 to 160 Hz with τ from 35 to 17.5 ms and amplitude $0.5 \cdot$ `crack_level` $\cdot\, v$, starting with the hammer's 0 to 1 ms jitter.
+- **Crack:** $n(t)$ is unit-variance white noise and $\tau$ runs from 10 ms at A0 to 4 ms at C8. $A = 0.2\,(1 - 0.9c) \cdot$ `crack_level` $\cdot\, v^{2.5} / \sqrt{\tau f_s/2}$, so harder strikes crack disproportionately more and the crack stays well under the felt pulse's low-frequency content. It is heard only through the string: the tests check that 99 % of a crack-only strike's energy lies on the string's partials.
+- **Multipath:** the felt pulse returns from the near termination after one round trip, $t_\mathrm{rt} = \beta / f_1$, and re-contacts the hammer. With depth $\mu = d\,\cdot$ `rumble_mix`, $K = 1 + \mathrm{round}(4\mu)$ contacts are spaced by $(t_\mathrm{rt} + 2\ \mathrm{ms}\cdot\mu)\times U(0.6, 1.4)$ (the time-varying delay distribution, re-drawn every strike, capped at 20 ms), with gains falling by $0.4 + 0.25\mu$ per contact, normalised to unit sum, and each later contact darker (one-pole at $6 f_h/(1 + 0.9k)$). Later contacts fade fast, so a distant strike is a soft roll rather than a flam: the tests measure a 1.5 ms contact at $V$ = 127 and a 15.6 ms rolling contact at $V$ = 25 (6.4 ms without multipath).
+- **Knock:** the only part heard directly is a soundboard knock, a decaying sinusoid at 70 to 160 Hz with τ from 35 to 17.5 ms and amplitude $0.3\,(1 - 0.6c) \cdot$ `crack_level` $\cdot\, v$, starting with the hammer's 0 to 1 ms jitter.
 
 #### Atmospheric absorption
 
@@ -312,23 +316,23 @@ Absorption is applied **exactly, partial by partial**: every mode's drive is wei
 
 #### Decay and wet mix vs. velocity
 
-The spec asks for decay time and wet mix to grow as velocity falls. In the string, a distant strike leaves a louder, longer aftersound: the aftersound mode's level is multiplied by $1 + 0.5d$ and its decay rate by $1 - 0.3d$. In the body, the strings drive `MultipathRumble`, the instrument's resonant surroundings: each voice's output is sent to three distance zones. In each zone:
+The spec asks for decay time and wet mix to grow as velocity falls. In the string, a distant strike leaves a louder, longer aftersound: the aftersound mode's level is multiplied by $1 + 0.25d$ and its decay rate by $1 - 0.15d$. In the body, the strings drive `MultipathRumble`, the instrument's resonant surroundings: each voice's output is sent to three distance zones. In each zone:
 
 - **Early paths:** 12 taps. The arrivals bunch early and then thin out: positions are $p^{1.5}$ across the spread, and gains are $\propto e^{-2.5p}$ with alternating sign, normalised by energy. Each tap is low-passed from the zone tone down to 0.4 × tone, so longer paths are darker. Each tap also "rolls": its delay and gain drift with its own Kolmogorov noise, whose corner is scaled by $0.7 + 0.3 \times$ the gust factor.
 - **Diffuse tail:** an 8-line feedback delay network. The mixing matrix is Householder, $I - \tfrac{2}{8}\mathbf{1}\mathbf{1}^T$. The base line lengths are 1427 to 2903 samples, scaled by the zone size and by fs/48 kHz. Each line is damped by a one-pole low-pass at 1.4 × tone, with feedback gain $g = 10^{-3L/(f_s T_{60})}$.
 
 | Zone | Pre-delay | Spread | Tone | FDN size | Roll depth | Roll corner | RT60 ($T$ = `rumble_decay`) | Output trim |
 |------|-----------|--------|------|----------|------------|-------------|-----------------------------|-------------|
-| near | 4 ms  | 35 ms  | 7.0 kHz | 0.35 | 0.4 ms | 0.45 Hz | max(0.25 s, 0.15 T) | 0.9 |
-| mid  | 18 ms | 140 ms | 3.2 kHz | 0.70 | 2.0 ms | 0.25 Hz | 0.45 T | 1.5 |
-| far  | 45 ms | 420 ms | 1.4 kHz | 1.15 | 6.0 ms | 0.12 Hz | T | 2.8 |
+| near | 4 ms  | 35 ms  | 7.0 kHz | 0.35 | 0.4 ms | 0.45 Hz | max(0.25 s, 0.15 T) | 0.6 |
+| mid  | 18 ms | 140 ms | 3.2 kHz | 0.70 | 2.0 ms | 0.25 Hz | 0.45 T | 0.9 |
+| far  | 45 ms | 420 ms | 1.4 kHz | 1.15 | 6.0 ms | 0.12 Hz | T | 1.5 |
 
 $$
-\mathrm{send} = \mathrm{mix}\,(0.12 + 0.88\, d), \qquad
+\mathrm{send} = \mathrm{mix}\,(0.06 + 0.44\, d), \qquad
 (w_\mathrm{near}, w_\mathrm{mid}, w_\mathrm{far}) \propto \bigl(\max(0, 1 - 2d),\ 1 - \lvert 2d - 1 \rvert,\ \max(0, 2d - 1)\bigr), \quad \textstyle\sum w^2 = 1
 $$
 
-A strike at $V$ = 127 excites only the short, bright near zone, at 12 % of `rumble_mix`; a strike at $V$ = 1 sends all of it into the long, dark, rolling far zone. In the tests, the energy from 1 to 3 s after a C3 held for 0.25 s is below 10⁻⁴ of the direct energy at $V$ = 120 and about 0.09 at $V$ = 30.
+A strike at $V$ = 127 excites only the short, bright near zone, at 6 % of `rumble_mix`; a strike at $V$ = 1 sends half of it into the long, dark, rolling far zone. The rumble colours a distant note rather than drowning it: at the defaults it sits about 6 dB under a $V$ = 20 note and 17 dB under a $V$ = 50 note. In the tests, the energy from 1 to 3 s after a C3 held for 0.25 s is below 10⁻⁴ of the direct energy at $V$ = 120 and about 0.02 at $V$ = 30.
 
 ### The piano (beyond the spec)
 
@@ -337,11 +341,12 @@ A strike at $V$ = 127 excites only the short, bright near zone, at 12 % of `rumb
 `piano_character` $c$ morphs every partial of the voice (`PianoVoice::strike()`), captured when the key is struck:
 
 - **Frequency:** $f_n = f_n^{\mathrm{I}}\,(f_n^{\mathrm{II}}/f_n^{\mathrm{I}})^{c}$, from the stretched, inharmonic stiff string (I) to exact harmonics $n f_1$ of a tine heard through its pickup (II). Stretch tuning fades out with $c$.
-- **Spectrum:** $g_n = (1-c)\,\hat g^{\mathrm{I}}_n + c\,\hat g^{\mathrm{II}}_n$, each normalised to unit energy so loudness holds through the morph. II's pickup spectrum is $\hat g^{\mathrm{II}}_n \propto b^{\,n-1}/\sqrt n$ with bark $b = 0.16 + 0.5\,v^{1.5} + 0.12\,(1 - k_n)$ (up to 0.8): near-sine when played softly, a growl of 2nd and 3rd harmonics when struck hard. Partial 7's prompt mode becomes the tine's own overtone, a short bell at $6.9 f_1$ ($T_{60}$ 0.35 s).
+- **Spectrum:** $g_n = (1-c)\,\hat g^{\mathrm{I}}_n + c\,\hat g^{\mathrm{II}}_n$, each normalised to unit energy so loudness holds through the morph. II's pickup spectrum is $\hat g^{\mathrm{II}}_n \propto b^{\,n-1}/\sqrt n \,\cdot\, (1 + (n f_1/2\,\mathrm{kHz})^2)^{-1/2}$ with bark $b = (0.16 + 0.5\,v^{1.5} + 0.12\,(1 - k_n))(1 - 0.45 k_n)$ (up to 0.8): near-sine when played softly, a growl of 2nd and 3rd harmonics when struck hard, thinning toward the treble so high notes stay round. Partial 7's prompt mode becomes the tine's own overtone, a short bell at $6.9 f_1$ ($T_{60}$ 0.35 s) at level $(0.10 + 0.22v)(1 - 0.75k_n)/\sqrt{1 + (6.9 f_1/3.5\,\mathrm{kHz})^2}$, so it fades out in the treble.
 - **Decay:** $\sigma_n$ moves geometrically to the tine's $\sigma_1^{\mathrm{II}}(1 + 0.9(n-1))$, $T_{60}^{\mathrm{II}} = 10\,\mathrm{s}\cdot 0.25^{k_n}$: the bark fades into a long, smooth near-sine. The aftersound mode becomes a whisper of chorus (0.35 cents, level 0.18).
-- **Hammer:** the felt corner (580 Hz at C4, a little darker than a raw model) moves to a soft neoprene tip (2.5 kHz at C4, order 2, weaker velocity dependence); the crack falls to 10 % and the soundboard knock to 40 % at II.
+- **Hammer:** the felt corner (580 Hz at C4, a little darker than a raw model) moves to a soft neoprene tip (1.8 kHz at C4, rising only 0.15 octave per octave, order 2.4, weaker velocity dependence); the crack falls to 10 % and the soundboard knock to 40 % at II.
+- **Onset:** II's output swells in through a one-pole gain with time constant $c\,(0.8 + 3.5 k_n)$ ms, so a tine never clicks on; re-striking a sounding key keeps the gain where it is. Measured at $V$ = 100: a 10 to 13 ms 10–90 % rise from C5 to G♯7.
 - **Stereo:** prompt and aftersound modes are summed into separate lanes; their difference is a "side" signal (width 0.22 at I, 0.55 at II, times `stereo_width`) that wanders as the two beat, like a spaced microphone pair.
-- **Level:** a II-specific trim (+9 dB tapering to 0 at mid-keyboard, −3 dB in the top octave) keeps the tine flat across the keyboard.
+- **Level:** a II-specific trim (+9 dB tapering to 0 at mid-keyboard, falling to −10 dB at C8) keeps the tine even *to the ear*: II's treble is a near-sine at 2 to 4 kHz, where the ear is most sensitive, so it is trimmed by roughly the ISO 226 equal-loudness difference rather than by RMS (`--calibrate 1` reads about −32 dB at C4 and −38 dB at C8).
 
 #### Sympathetic resonance (I)
 
@@ -428,7 +433,7 @@ A harder strike compresses the felt for less time, so it sounds brighter. The pu
 | Granular rain layer over the sustain | Overlay: grains + hiss that follow the wind and the piano. Fuse: drops on strings, hiss in the modes, patter modulation |
 | Rain density from $N(D)$ | Drop flux $\int N v_T\, dD$ × 0.015 m² as a Poisson rate; flux-weighted diameters |
 | Rain linked to wind LFO amplitude | $R = R_0 (1 + \min(\bar U/8, 1)(g - 1))^{3c}$, from the storm-wide gust factor |
-| Brighter rain in gusts | Grain centre $700\,\lvert\mathbf v\rvert^{0.75}$ Hz from the vector impact speed; hiss bandwidth follows the mean impact speed |
+| Brighter rain in gusts | Each drop's tick brightens with the vector impact speed ($1200\,\lvert\mathbf v\rvert^{0.7}$ Hz); the distant-rain bed's bandwidth follows the mean impact speed |
 | (not in spec) | Modal stiff-string piano, Minnaert bubbles, Aeolian wire whistles, wind roar, tension glide, energy-based voice stealing |
 
 ---
@@ -466,11 +471,11 @@ All 27 parameters are defined in `Source/Plugin/Parameters.h`, which is the sing
 | `resonance` | String Resonance | 0 – 1 | 0.5 | | I: sympathetic string resonance, blooming with the sustain pedal. |
 | `piano_level` | Piano Level | −24 – +6 dB | 0 | | Gain of the string bus. Rumble sends are taken after it. |
 | `tuning` | Tuning A4 | 415 – 466 Hz | 440 | | Reference pitch, before stretch tuning. |
-| `storm_distance` | Storm Distance | 50 – 4000 m | 1200 | 800 | $x_\mathrm{max}$: the distance of a velocity-1 strike. Velocity 127 is always overhead. |
-| `crack_level` | Crack | 0 – 1 | 0.5 | | Amplitude $A$ of the crack in the hammer's force (heard through the string) and of the soundboard knock. |
-| `air_absorption` | Air Absorption | 0 – 1 | 0.5 | | Fraction $a$ of the strike distance applied to every partial's excitation as $e^{-\alpha(f_n)xa}$. |
-| `rumble_mix` | Rumble | 0 – 1 | 0.35 | | Multipath depth of distant strikes' contact ($\mu = d \cdot$ value) and the per-voice send $0.12 + 0.88d$ into the body-rumble zones. |
-| `rumble_decay` | Rumble Decay | 0.5 – 12 s | 5.0 | 4.0 | RT60 of the far zone (mid 0.45×, near max(0.25 s, 0.15×)). The plug-in reports a tail of 12 s plus this value. |
+| `storm_distance` | Storm Distance | 50 – 4000 m | 600 | 800 | $x_\mathrm{max}$: the distance of a velocity-1 strike. Velocity 127 is always overhead. |
+| `crack_level` | Crack | 0 – 1 | 0.3 | | Amplitude $A$ of the crack in the hammer's force (heard through the string) and of the soundboard knock. |
+| `air_absorption` | Air Absorption | 0 – 1 | 0.35 | | Fraction $a$ of the strike distance applied to every partial's excitation as $e^{-\alpha(f_n)xa}$. |
+| `rumble_mix` | Rumble | 0 – 1 | 0.2 | | Multipath depth of distant strikes' contact ($\mu = d \cdot$ value) and the per-voice send $0.06 + 0.44d$ into the body-rumble zones. |
+| `rumble_decay` | Rumble Decay | 0.5 – 12 s | 3.5 | 4.0 | RT60 of the far zone (mid 0.45×, near max(0.25 s, 0.15×)). The plug-in reports a tail of 12 s plus this value. |
 | `wind_speed` | Wind Speed | 0 – 30 m/s | 8.0 | 8.0 | Mean wind $\bar U$, which glides with a 0.35 s time constant. |
 | `turbulence` | Turbulence | 0 – 1 | 0.35 | | Turbulence intensity $I = \sigma_u/\bar U = 0.6 \times$ value. |
 | `gust_length` | Gust Length | 2 – 100 m | 12 | 15 | Integral length scale $L_u$. The gust corner is $\bar U/(8.41 L_u)$, so longer means slower gusts. |
@@ -480,7 +485,7 @@ All 27 parameters are defined in `Source/Plugin/Parameters.h`, which is the sing
 | `wind_air` | Air Level | 0 – 1 | 0.3 | | Overlay: level of the audible wind, roar $\propto U^2$ and Aeolian wire whistles. |
 | `rain_rate` | Rain Rate | 0 – 150 mm/h | 8.0 | 15 | $R_0$, the rainfall rate at the mean wind speed. |
 | `rain_coupling` | Wind Coupling | 0 – 1 | 0.6 | | $c$ in $R = R_0(1 + \min(\bar U/8,1)(g-1))^{3c}$: how strongly rain follows the gusts. |
-| `rain_level` | Rain Level | 0 – 1 | 0.35 | | Texture amount $\ell$ in both modes: overlay gain $0.9\,\ell^{1.5}$, fused drop power, hiss and patter depth. At 0, no drops are generated. |
+| `rain_level` | Rain Level | 0 – 1 | 0.35 | | Texture amount $\ell$ in both modes: overlay gain $3.15\,\ell^{1.5}$, fused drop power, hiss and patter depth. At 0, no drops are generated. |
 | `rain_surface` | Puddles | 0 – 1 | 0.3 | | Ground type, from 0 (leaves and soil) to 1 (standing water). Sets the probability and level of Minnaert bubbles (overlay). |
 | `rain_blend` | Rain Overlay/Fuse | 0 – 1 | 0.5 | | Equal-power blend: overlay (rain layer beside the piano) ↔ fuse (rain inside the notes). |
 | `rain_follow` | Piano Follow | 0 – 1 | 0.6 | | Overlay: how much the rain layer follows the piano's envelope and spectral centre. |

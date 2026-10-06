@@ -171,6 +171,7 @@ private:
     float hissAmp = 0.0f;
     float character = 0.0f; // I (0) .. II (1) of the latest strike
     float lastSide = 0.0f;
+    float attackGain = 1.0f, attackCoef = 1.0f; // II's soft onset
     // Open-loop reference envelope of the strike (captured after contact, decays at the string's
     // slowest rate). Rain rides on this, never on the live energy, so it cannot sustain itself.
     float referenceEnergy = 0.0f, referenceDecay = 0.0f;

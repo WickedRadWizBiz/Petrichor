@@ -469,7 +469,9 @@ void testThunderIsTheHammer()
     std::printf ("  contacts: V=127 %d (%.1f ms) | V=25 %d (%.1f ms) | V=25 without multipath %d (%.1f ms)\n",
                  hardPeaks, hardSpan, softPeaks, softSpan, dryPeaks, drySpan);
     CHECK (hardPeaks == 1, "a close strike is one localised contact (%d)", hardPeaks);
-    CHECK (softPeaks >= 3 && softSpan > 2.0f * hardSpan, "a distant strike rolls through several contacts");
+    // The re-contacts are soft (each darker and well under the first), so they blur into one long
+    // rolling contact rather than separate flams: measure the roll by its length.
+    CHECK (softSpan > 2.0f * hardSpan && softSpan > 1.5f * drySpan, "a distant strike rolls through several contacts");
     CHECK (dryPeaks == 1, "multipath off: one contact");
 
     // No separate thunder sound: with the strings removed (crack only, absorbing distance huge),

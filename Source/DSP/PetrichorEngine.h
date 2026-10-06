@@ -23,11 +23,11 @@ struct EngineParams
     float pianoLevelDb   = 0.0f;
 
     // Thunder = the hammer-string interaction (velocity = distance). Always fused.
-    float stormDistanceM = 1200.0f; // distance of a velocity-1 strike
-    float crackLevel     = 0.5f;    // 0..1, broadband crack in the hammer force
-    float airAbsorption  = 0.5f;    // 0..1, scales alpha(f) applied to the strike
-    float rumbleMix      = 0.35f;   // 0..1, multipath contact + body rumble
-    float rumbleDecayS   = 5.0f;    // RT60 of the farthest body-rumble zone
+    float stormDistanceM = 600.0f;  // distance of a velocity-1 strike
+    float crackLevel     = 0.3f;    // 0..1, broadband crack in the hammer force
+    float airAbsorption  = 0.35f;   // 0..1, scales alpha(f) applied to the strike
+    float rumbleMix      = 0.2f;    // 0..1, multipath contact + body rumble
+    float rumbleDecayS   = 3.5f;    // RT60 of the farthest body-rumble zone
 
     // Wind (Kolmogorov / Strouhal)
     float windSpeedMs    = 8.0f;    // 0..30

@@ -348,7 +348,7 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
         const float d = v.getDistanceFraction();
         float zoneW[MultipathRumble::kZones];
         MultipathRumble::zoneWeights (d, zoneW);
-        const float send = rumbleMix * (0.12f + 0.88f * d);
+        const float send = rumbleMix * (0.06f + 0.44f * d);
         const float s0 = send * zoneW[0], s1 = send * zoneW[1], s2 = send * zoneW[2];
 
         const float width = clampf (params.stereoWidth, 0.0f, 1.0f);

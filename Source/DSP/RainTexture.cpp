@@ -29,8 +29,9 @@ void RainTexture::prepare (double sampleRate, uint32_t seed)
     samplesToNextDrop = 0.0f;
     hissL.reset();
     hissR.reset();
-    hissHpL.setCutoff (150.0f, fs);
-    hissHpR.setCutoff (150.0f, fs);
+    hissHpL.setCutoff (120.0f, fs);
+    hissHpR.setCutoff (120.0f, fs);
+    pinkL = pinkR = Pinker{};
     hissGain.reset (0.0f);
     smoothedRate = rainRate = grainRate = 0.0f;
 }
@@ -89,13 +90,15 @@ void RainTexture::controlTick (const WindState& wind, const RainSettings& s, con
         return spectralLean > 0.0f ? std::pow (hz, 1.0f - spectralLean) * std::pow (pianoCentroid, spectralLean) : hz;
     };
 
-    // Overlay hiss bed: wider and brighter as drops and wind speed up.
-    const float hissCutoff = lean (0.45f * impactCentreHz (std::max (meanImpactSpeed, 0.5f)));
+    // The distant-rain bed - thousands of far drops merged into a soft wash, tilted between pink and
+    // white - carries most of the sound of rain. It brightens with impact speed: a low hiss in a lull,
+    // ~2 kHz centre in steady wind-driven rain.
+    const float hissCutoff = lean (1500.0f * std::pow (std::max (meanImpactSpeed, 0.5f), 0.65f));
     hissL.set (hissCutoff, 0.6f, fs);
-    hissR.set (hissCutoff * 1.03f, 0.6f, fs);
+    hissR.set (hissCutoff * 1.04f, 0.6f, fs);
 
     const float density = grainRate > 0.0f ? std::sqrt (grainRate / 200.0f) * std::sqrt (meanImpactSpeed / 4.0f) : 0.0f;
-    hissGain.setTarget (0.010f * density * overlay * std::sqrt (followFactor), std::max (1, (int) (dt * fs)));
+    hissGain.setTarget (0.025f * density * overlay * std::sqrt (followFactor), std::max (1, (int) (dt * fs)));
 
     //==========================================================================
     // Fused amounts, all relative to the piano's own sound.
@@ -143,29 +146,51 @@ void RainTexture::spawnGrain (const PendingDrop& drop) noexcept
 
     auto& g = grains[numGrains++];
 
-    const float tau = 0.0004f + 0.0016f * drop.diameter;
-    g.noiseEnv = drop.amp;
-    g.noiseDecay = std::exp (-1.0f / (tau * fs));
+    // Where it lands: uniform over the ground around the listener (p(r) ~ r), so most drops are
+    // far away - quiet and dull - and only a few land close enough to hear clearly.
+    constexpr float rMin = 0.4f, rMax = 15.0f;
+    const float r = std::sqrt (rMin * rMin + rng.uniform() * (rMax * rMax - rMin * rMin));
+    const float distanceGain = std::min (1.0f, 0.8f / r);
+
+    const float tau = 0.0008f + 0.0018f * drop.diameter;
+    constexpr float attackTau = 0.00025f;
+    g.decayEnv  = drop.amp * distanceGain;
+    g.attackEnv = g.decayEnv;
+    g.decayMul  = std::exp (-1.0f / (tau * fs));
+    g.attackMul = std::exp (-1.0f / (attackTau * fs));
     g.sign = rng.uniform() < 0.5f ? -1.0f : 1.0f;
+    g.patterGain = 1.0f / distanceGain; // fused patter: drops land on the piano, not out in the garden
 
     // Overlay: louder piano -> denser, louder rain (thinning by the follow factor).
     g.audible = (overlay > 0.0f && rng.uniform() < followFactor) ? overlay * std::sqrt (std::max (followFactor, 1.0f)) : 0.0f;
 
-    float centre = impactCentreHz (drop.speed) * (0.8f + 0.4f * rng.uniform());
+    // Body: the surface's soft "pat" - lower for bigger drops (a few hundred Hz).
+    float bodyHz = 500.0f * std::pow (1.0f / std::max (drop.diameter, 0.2f), 0.4f) * (0.8f + 0.45f * rng.uniform());
+    // Tick: the impact's own noise, brighter for faster drops, darker the farther away.
+    float tickHz = std::min (1200.0f * std::pow (std::max (drop.speed, 0.5f), 0.7f), 16000.0f / (1.0f + r / 1.5f));
     if (spectralLean > 0.0f)
-        centre = std::pow (centre, 1.0f - spectralLean) * std::pow (pianoCentroid, spectralLean);
-    g.resonator.reset();
-    g.resonator.set (clampf (centre, 200.0f, 0.42f * fs), 1.3f, fs);
+    {
+        bodyHz = std::pow (bodyHz, 1.0f - spectralLean) * std::pow (pianoCentroid, spectralLean);
+        tickHz = std::pow (tickHz, 1.0f - 0.5f * spectralLean) * std::pow (pianoCentroid, 0.5f * spectralLean);
+    }
+    g.body.reset();
+    g.body.set (clampf (bodyHz, 120.0f, 0.4f * fs), 2.0f, fs);
+    g.tick1.reset();
+    g.tick2.reset();
+    g.tick1.setCutoff (clampf (tickHz, 300.0f, 0.45f * fs), fs);
+    g.tick2.setCutoff (clampf (tickHz, 300.0f, 0.45f * fs), fs);
+    g.bodyMix = 0.8f;
+    g.tickMix = 0.45f * std::pow (clampf (drop.speed / 6.5f, 0.1f, 2.5f), 0.8f);
 
     // Rain slants downwind: bias the image toward the side the wind blows to.
     const float pan = clampf (rng.bipolar() * (1.0f - 0.5f * drop.slant) + 0.6f * drop.slant, -1.0f, 1.0f);
     panGains (pan, g.gainL, g.gainR);
 
-    float life = tau * 9.2f; // -80 dB
+    float life = tau * 9.2f + 0.004f; // -80 dB, plus the body's ring
 
-    // Larger drops landing in water entrain a bubble that rings at its Minnaert frequency.
-    g.bubbleEnv = 0.0f;
-    const float bubbleChance = surface * (drop.diameter > 1.0f ? 0.45f : 0.1f);
+    // Larger drops landing close by in water entrain a bubble that rings at its Minnaert frequency.
+    g.bubbleEnv = g.bubbleAttack = 0.0f;
+    const float bubbleChance = surface * (drop.diameter > 1.0f ? 0.45f : 0.1f) * (r < 5.0f ? 1.0f : 0.0f);
     if (g.audible > 0.0f && rng.uniform() < bubbleChance)
     {
         const float radius = drop.diameter * (0.25f + 0.35f * rng.uniform());
@@ -174,8 +199,9 @@ void RainTexture::spawnGrain (const PendingDrop& drop) noexcept
         g.bubblePhase = 0.0f;
         g.bubbleInc = f / fs;
         g.bubbleChirp = std::exp (std::log (1.0f + 0.15f + 0.2f * rng.uniform()) / (bubbleTau * 4.0f * fs));
-        g.bubbleEnv = drop.amp * 0.6f * surface;
+        g.bubbleEnv = g.bubbleAttack = drop.amp * distanceGain * 0.5f * surface;
         g.bubbleDecay = std::exp (-1.0f / (bubbleTau * fs));
+        g.bubbleAttackMul = std::exp (-1.0f / (0.0005f * fs));
         life = std::max (life, bubbleTau * 9.2f);
     }
 
@@ -184,7 +210,7 @@ void RainTexture::spawnGrain (const PendingDrop& drop) noexcept
 
 void RainTexture::render (float* left, float* right, float* patterLeft, float* patterRight, int numSamples) noexcept
 {
-    const float outGain = 0.9f * level * std::sqrt (level);
+    const float outGain = 3.15f * level * std::sqrt (level);
     int nextEvent = 0;
 
     for (int i = 0; i < numSamples; ++i)
@@ -197,33 +223,37 @@ void RainTexture::render (float* left, float* right, float* patterLeft, float* p
         for (int k = 0; k < numGrains;)
         {
             auto& g = grains[k];
+            const float env = g.decayEnv - g.attackEnv;
+            g.decayEnv  *= g.decayMul;
+            g.attackEnv *= g.attackMul;
 
-            // Fused patter: the impact envelope (compressed, ~0.1 for a typical drop), random polarity,
-            // panned like the grain.
-            const float patter = g.sign * 0.1f * std::min (g.noiseEnv * (1.0f / kTypicalDropAmp), 3.0f);
+            // Fused patter: the impact envelope as if the drop hit the piano itself (compressed,
+            // ~0.1 for a typical drop), random polarity, panned like the grain.
+            const float patter = g.sign * 0.1f * std::min (env * g.patterGain * (1.0f / kTypicalDropAmp), 3.0f);
             pl += patter * g.gainL;
             pr += patter * g.gainR;
 
             if (g.audible > 0.0f)
             {
-                g.resonator.process (rng.bipolar() * g.noiseEnv * noiseScale);
-                float y = g.resonator.bandNormalised();
+                const float n = rng.bipolar() * env * noiseScale;
+                g.body.process (n);
+                const float tick = g.tick2.process (g.tick1.process (n));
+                float y = g.bodyMix * g.body.bandNormalised() + g.tickMix * tick;
 
                 if (g.bubbleEnv > 0.0f)
                 {
-                    y += fastSinCycles (g.bubblePhase) * g.bubbleEnv;
+                    y += fastSinCycles (g.bubblePhase) * (g.bubbleEnv - g.bubbleAttack);
                     g.bubblePhase += g.bubbleInc;
                     if (g.bubblePhase >= 1.0f) g.bubblePhase -= 1.0f;
                     g.bubbleInc = std::min (g.bubbleInc * g.bubbleChirp, 0.45f);
-                    g.bubbleEnv *= g.bubbleDecay;
+                    g.bubbleEnv    *= g.bubbleDecay;
+                    g.bubbleAttack *= g.bubbleAttackMul;
                 }
 
                 y *= g.audible;
                 l += y * g.gainL;
                 r += y * g.gainR;
             }
-
-            g.noiseEnv *= g.noiseDecay;
 
             if (--g.samplesLeft <= 0)
                 grains[k] = grains[--numGrains];
@@ -234,8 +264,9 @@ void RainTexture::render (float* left, float* right, float* patterLeft, float* p
         const float hg = hissGain.next();
         if (hg > 0.0f)
         {
-            hissL.process (rng.bipolar() * noiseScale);
-            hissR.process (rng.bipolar() * noiseScale);
+            const float wl = rng.bipolar(), wr = rng.bipolar();
+            hissL.process ((0.5f * pinkL.process (wl) + 0.15f * wl) * noiseScale); // ~ -1.5 dB/octave
+            hissR.process ((0.5f * pinkR.process (wr) + 0.15f * wr) * noiseScale);
             l += hissHpL.process (hissL.lp) * hg;
             r += hissHpR.process (hissR.lp) * hg;
         }

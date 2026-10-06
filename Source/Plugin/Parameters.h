@@ -32,11 +32,11 @@ inline const std::array<Spec, 27>& all()
         { "tuning",          "Tuning A4",       "Hz",  415.0f, 466.0f,  440.0f,   0.0f,   &EngineParams::tuningA4Hz },
 
         // Thunder: the hammer-string interaction (always fused)
-        { "storm_distance",  "Storm Distance",  "m",    50.0f, 4000.0f, 1200.0f, 800.0f, &EngineParams::stormDistanceM },
-        { "crack_level",     "Crack",           "",      0.0f,    1.0f,    0.5f,   0.0f,   &EngineParams::crackLevel },
-        { "air_absorption",  "Air Absorption",  "",      0.0f,    1.0f,    0.5f,   0.0f,   &EngineParams::airAbsorption },
-        { "rumble_mix",      "Rumble",          "",      0.0f,    1.0f,    0.35f,  0.0f,   &EngineParams::rumbleMix },
-        { "rumble_decay",    "Rumble Decay",    "s",     0.5f,   12.0f,    5.0f,   4.0f,   &EngineParams::rumbleDecayS },
+        { "storm_distance",  "Storm Distance",  "m",    50.0f, 4000.0f, 600.0f,  800.0f, &EngineParams::stormDistanceM },
+        { "crack_level",     "Crack",           "",      0.0f,    1.0f,    0.3f,   0.0f,   &EngineParams::crackLevel },
+        { "air_absorption",  "Air Absorption",  "",      0.0f,    1.0f,    0.35f,  0.0f,   &EngineParams::airAbsorption },
+        { "rumble_mix",      "Rumble",          "",      0.0f,    1.0f,    0.2f,   0.0f,   &EngineParams::rumbleMix },
+        { "rumble_decay",    "Rumble Decay",    "s",     0.5f,   12.0f,    3.5f,   4.0f,   &EngineParams::rumbleDecayS },
 
         // Wind
         { "wind_speed",      "Wind Speed",      "m/s",   0.0f,   30.0f,    8.0f,   8.0f,   &EngineParams::windSpeedMs },
