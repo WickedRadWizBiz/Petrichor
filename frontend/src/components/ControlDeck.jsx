@@ -27,7 +27,7 @@ const CAPTIONS = {
       Gusts raise R; &Lambda; = 4.1&thinsp;R<sup className="text-[0.5rem]">&minus;0.21</sup>
     </>
   ),
-  piano: <>Stiff strings, felt hammers</>,
+  piano: <>I: the grand, softened &middot; II: a Rhodes-style tine</>,
   master: <>Output gain</>,
 };
 
@@ -80,7 +80,7 @@ function ModeKnob({ spec, blendId, accent }) {
       className="min-w-0 transition-opacity duration-150"
       style={{ opacity: 0.32 + 0.68 * relevance }}
       data-mode={spec.mode}
-      title={relevance < 0.25 ? `${spec.mode === "fuse" ? "Fuse" : "Overlay"} control - move the blend toward ${spec.mode === "fuse" ? "Fuse" : "Overlay"} to hear it` : undefined}
+      title={relevance < 0.25 ? `Only heard toward ${spec.mode === "fuse" ? "Fuse" : spec.mode === "overlay" ? "Overlay" : spec.mode}` : undefined}
     >
       <Knob id={spec.id} accent={accent} />
     </div>

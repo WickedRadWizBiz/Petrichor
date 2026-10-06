@@ -29,6 +29,11 @@ export const PARAMS = [
     desc: "Spreads the keys across the stereo field, bass to the left, treble to the right." },
   { id: "piano_level", name: "Piano Level", short: "Level", unit: "dB", min: -24, max: 6, def: 0, centre: -100, origin: 0, group: "piano",
     desc: "Gain of the struck strings." },
+  { id: "piano_character", name: "Piano I/II", short: "I ↔ II", unit: "", min: 0, max: 1, def: 0, centre: 0, group: "piano", blend: true,
+    labels: ["I", "II"], hints: ["Grand", "Tine"],
+    desc: "I: the acoustic grand, softened. II: a Rhodes-style tine piano: harmonic, a round fundamental, a bell ping and a bark when struck hard. In between, every partial morphs." },
+  { id: "resonance", name: "String Resonance", short: "Resonance", unit: "", min: 0, max: 1, def: 0.5, centre: 0, group: "piano", mode: "I",
+    desc: "I: undamped strings ring along with what you play (sympathetic resonance), blooming with the sustain pedal. A tine piano (II) has none." },
   { id: "tuning", name: "Tuning A4", short: "A4", unit: "Hz", min: 415, max: 466, def: 440, centre: 0, origin: 440, group: "piano",
     desc: "Reference pitch: every string is tuned relative to A4." },
 
@@ -92,9 +97,9 @@ export const GROUPS = [
   { id: "rain", title: "Rain", accent: "rain", cols: 3,
     caption: "Gusts raise R; Λ = 4.1 R^−0.21",
     long: "Marshall-Palmer rain driven by the wind's gusts. Overlay: a texture layer beside the piano that follows its playing. Fuse: rain inside the notes, landing on the strings." },
-  { id: "piano", title: "Piano", accent: "earth", cols: 3,
-    caption: "Stiff strings, felt hammers",
-    long: "The instrument itself: hammer felt, unison detune, decay, width and tuning." },
+  { id: "piano", title: "Piano", accent: "earth", cols: 4,
+    caption: "I: the grand, softened · II: a Rhodes-style tine",
+    long: "The instrument itself. The I ↔ II slider morphs every partial from the acoustic grand (stiff strings, felt hammers, sympathetic resonance) to a Rhodes-style tine piano (harmonic, bell ping, bark when struck hard)." },
   { id: "master", title: "Master", accent: "mist", cols: 1,
     caption: "Output gain",
     long: "Output gain." },
@@ -108,6 +113,8 @@ export const GROUPS = [
 export function modeRelevance(spec, blend) {
   if (!spec.mode) return 1;
   const b = Math.min(1, Math.max(0, blend)) * Math.PI * 0.5;
+  if (spec.mode === "I") return 1 - Math.min(1, Math.max(0, blend));
+  if (spec.mode === "II") return Math.min(1, Math.max(0, blend));
   return spec.mode === "fuse" ? Math.sin(b) : Math.cos(b);
 }
 

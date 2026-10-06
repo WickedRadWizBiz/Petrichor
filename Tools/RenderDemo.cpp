@@ -1,9 +1,10 @@
 // Offline renderer: plays scripted performances through the engine and writes WAV files.
 //   PetrichorRender <output-dir>            render the demo pieces
-//   PetrichorRender --calibrate             print per-key loudness at a fixed velocity
+//   PetrichorRender --calibrate [I/II]      print per-key loudness at a fixed velocity (0 = I, 1 = II)
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <string>
 #include <vector>
@@ -300,8 +301,39 @@ void dryPiano (const std::string& dir)
     renderScore (dir + "/05_dry_piano.wav", s, t + 2.0, p);
 }
 
+// 6. Piano I -> II: the same phrase as the softened grand (I), halfway, and the Rhodes-style tine (II).
+void pianoCharacter (const std::string& dir)
+{
+    Score s;
+    const double section = 9.0;
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        const double t0 = 0.4 + section * pass;
+        s.pedal (t0 - 0.05, true);
+        s.chord (t0, { 50, 57, 60, 64 }, 60, 3.0, 0.03);
+        s.note (t0 + 0.5, 76, 70, 0.6);
+        s.note (t0 + 1.0, 74, 55, 0.6);
+        s.note (t0 + 1.5, 72, 85, 0.9);
+        s.pedalChange (t0 + 3.0);
+        s.chord (t0 + 3.0, { 45, 52, 59, 64, 67 }, 50, 3.0, 0.04);
+        s.note (t0 + 3.6, 79, 110, 1.2); // a hard hit: listen for the bark on II
+        s.note (t0 + 5.0, 71, 30, 1.5);  // a soft one: near-sine on II
+        s.pedal (t0 + 7.5, false);
+    }
+
+    EngineParams p;
+    p.windSpeedMs = 3.0f;
+    p.windAir = 0.0f;
+    p.rainLevel = 0.0f;
+    p.rumbleMix = 0.2f;
+    p.sustain = 1.2f;
+    renderScore (dir + "/06_piano_I_to_II.wav", s, section * 3 + 1.0, p, [section] (double t, EngineParams& q) {
+        q.character = (float) std::min (1.0, 0.5 * std::floor (t / section));
+    });
+}
+
 //==============================================================================
-void calibrate()
+void calibrate (float character)
 {
     std::printf ("key  rms_dB(0.5s, >100Hz)\n");
     for (int key = 21; key <= 108; key += 3)
@@ -310,6 +342,7 @@ void calibrate()
         e.prepare (kSampleRate, 256);
         EngineParams p;
         p.windSpeedMs = 0.0f; p.windAir = 0.0f; p.rainLevel = 0.0f; p.rumbleMix = 0.0f;
+        p.character = character; p.resonance = 0.0f;
         p.crackLevel = 0.0f; p.airAbsorption = 0.0f; p.stereoWidth = 0.0f; p.masterDb = 0.0f;
         e.setParams (p);
         e.noteOn (key, 80);
@@ -340,7 +373,7 @@ int main (int argc, char** argv)
     const std::string arg = argc > 1 ? argv[1] : ".";
     if (arg == "--calibrate")
     {
-        calibrate();
+        calibrate (argc > 2 ? (float) std::atof (argv[2]) : 0.0f);
         return 0;
     }
 
@@ -349,5 +382,6 @@ int main (int argc, char** argv)
     rainOverlayToFuse (arg);
     stormPrelude (arg);
     dryPiano (arg);
+    pianoCharacter (arg);
     return 0;
 }

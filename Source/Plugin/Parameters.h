@@ -18,15 +18,17 @@ struct Spec
 };
 
 // Keep in sync with frontend/src/params.js (ids, ranges and defaults).
-inline const std::array<Spec, 25>& all()
+inline const std::array<Spec, 27>& all()
 {
-    static const std::array<Spec, 25> specs { {
+    static const std::array<Spec, 27> specs { {
         // Piano
         { "hammer_hardness", "Hammer Hardness", "",     0.0f,    1.0f,    0.5f,   0.0f,   &EngineParams::hammerHardness },
         { "sustain",         "Sustain",         "x",    0.3f,    3.0f,    1.0f,   1.0f,   &EngineParams::sustain },
         { "unison",          "String Detune",   "ct",   0.0f,    4.0f,    1.2f,   0.0f,   &EngineParams::unisonCents },
         { "stereo_width",    "Stereo Width",    "",     0.0f,    1.0f,    0.7f,   0.0f,   &EngineParams::stereoWidth },
         { "piano_level",     "Piano Level",     "dB",  -24.0f,   6.0f,    0.0f, -100.0f,   &EngineParams::pianoLevelDb },
+        { "piano_character", "Piano I/II",      "",      0.0f,    1.0f,    0.0f,   0.0f,   &EngineParams::character },
+        { "resonance",       "String Resonance", "",     0.0f,    1.0f,    0.5f,   0.0f,   &EngineParams::resonance },
         { "tuning",          "Tuning A4",       "Hz",  415.0f, 466.0f,  440.0f,   0.0f,   &EngineParams::tuningA4Hz },
 
         // Thunder: the hammer-string interaction (always fused)

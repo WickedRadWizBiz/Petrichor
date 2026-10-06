@@ -29,7 +29,8 @@ void PetrichorEngine::prepare (double newSampleRate, int /*maxBlockSize*/)
     air.prepare (sampleRate, 0xA1Bu);
     rumble.prepare (sampleRate, 0x7E11u);
 
-    for (auto* b : { &voiceBuffer, &pianoLeft, &pianoRight, &patterLeft, &patterRight })
+    sympathetic.prepare (sampleRate);
+    for (auto* b : { &voiceBuffer, &sideBuffer, &pianoMono, &pianoLeft, &pianoRight, &patterLeft, &patterRight })
         b->assign (kControlBlock, 0.0f);
     for (auto& b : sendBuffers)
         b.assign (kControlBlock, 0.0f);
@@ -62,6 +63,7 @@ StrikeSettings PetrichorEngine::makeStrikeSettings() const noexcept
     s.absorption     = params.airAbsorption;
     s.crackLevel     = params.crackLevel;
     s.multipath      = params.rumbleMix;
+    s.character      = params.character;
     s.softPedal      = softPedal;
     return s;
 }
@@ -203,6 +205,7 @@ void PetrichorEngine::allSoundOff() noexcept
         slot.keyHeld = slot.hasPending = false;
     }
     rumble.clear();
+    sympathetic.clear();
     sustainPedal = softPedal = false;
 }
 
@@ -247,6 +250,10 @@ void PetrichorEngine::controlTick (float dt) noexcept
     rain.controlTick (ws, rs, pianoFollow, dt);
 
     air.controlTick (ws, params.windAir * overlayAmount (params.windBlend), dt);
+
+    // Free strings ring along with the grand (I); a Rhodes (II) has none.
+    sympathetic.setTuning (params.tuningA4Hz);
+    sympathetic.setState (params.resonance * (1.0f - clampf (params.character, 0.0f, 1.0f)), sustainPedal, dt);
 
     rumble.setDecay (params.rumbleDecayS);
     rumble.controlTick (ws, dt);
@@ -332,7 +339,7 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
         if (! v.isActive())
             continue;
 
-        v.render (voiceBuffer.data(), n);
+        v.render (voiceBuffer.data(), sideBuffer.data(), n);
 
         float pl, pr;
         panGains (keyPan (v.getKey()), pl, pr);
@@ -344,18 +351,25 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
         const float send = rumbleMix * (0.12f + 0.88f * d);
         const float s0 = send * zoneW[0], s1 = send * zoneW[1], s2 = send * zoneW[2];
 
+        const float width = clampf (params.stereoWidth, 0.0f, 1.0f);
         float g = voiceGainStart;
         for (int i = 0; i < n; ++i)
         {
             const float y = voiceBuffer[(size_t) i] * g;
+            const float sd = sideBuffer[(size_t) i] * g * width;
             g += voiceGainStep;
-            pianoLeft[(size_t) i]  += y * pl;
-            pianoRight[(size_t) i] += y * pr;
+            pianoLeft[(size_t) i]  += y * pl + sd;
+            pianoRight[(size_t) i] += y * pr - sd;
             sendBuffers[0][(size_t) i] += y * s0;
             sendBuffers[1][(size_t) i] += y * s1;
             sendBuffers[2][(size_t) i] += y * s2;
         }
     }
+
+    // Sympathetic strings ring along with the dry piano.
+    for (int i = 0; i < n; ++i)
+        pianoMono[(size_t) i] = 0.5f * (pianoLeft[(size_t) i] + pianoRight[(size_t) i]);
+    sympathetic.process (pianoMono.data(), pianoLeft.data(), pianoRight.data(), n);
 
     // Rain overlay goes straight to the mix; its patter modulates the piano when fused.
     rain.render (left, right, patterLeft.data(), patterRight.data(), n);

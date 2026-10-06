@@ -19,8 +19,9 @@ export default function BlendSlider({ id, accent = "rain" }) {
   const [active, setActive] = useState(false);
 
   const n = clamp(p.normalised, 0, 1);
+  const [leftLabel, rightLabel] = spec.labels || ["Overlay", "Fuse"];
   const fusePct = Math.round(n * 100);
-  const label = fusePct <= 2 ? "Overlay" : fusePct >= 98 ? "Fuse" : `${100 - fusePct} / ${fusePct}`;
+  const label = fusePct <= 2 ? (spec.hints?.[0] ?? leftLabel) : fusePct >= 98 ? (spec.hints?.[1] ?? rightLabel) : `${100 - fusePct} / ${fusePct}`;
 
   const tip = () => ({
     owner: id,
@@ -142,7 +143,7 @@ export default function BlendSlider({ id, accent = "rain" }) {
   return (
     <div className="mb-[0.35rem] flex min-w-0 items-center gap-[0.45rem]" data-blend={id}>
       <span className={`eyebrow !text-[0.55rem] ${n < 0.5 ? "!text-mist-200" : ""}`} aria-hidden="true">
-        Overlay
+        {leftLabel}
       </span>
       <div
         ref={track}
@@ -153,7 +154,7 @@ export default function BlendSlider({ id, accent = "rain" }) {
         aria-valuemin={0}
         aria-valuemax={1}
         aria-valuenow={Number(p.value.toFixed(4))}
-        aria-valuetext={`${100 - fusePct}% overlay, ${fusePct}% fuse`}
+        aria-valuetext={`${100 - fusePct}% ${leftLabel}, ${fusePct}% ${rightLabel}`}
         data-param={id}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -197,7 +198,7 @@ export default function BlendSlider({ id, accent = "rain" }) {
         />
       </div>
       <span className={`eyebrow !text-[0.55rem] ${n >= 0.5 ? colors.text : ""}`} aria-hidden="true">
-        Fuse
+        {rightLabel}
       </span>
       <span className="num w-[3.4rem] shrink-0 text-right text-[0.62rem] text-mist-300" aria-hidden="true">
         {label}

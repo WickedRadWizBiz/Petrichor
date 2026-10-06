@@ -75,7 +75,9 @@ The README has the full mathematics, the parameter and MIDI tables, and the buil
 | Rumble send | send $=\mathrm{mix}(0.12+0.88d)$, triangular equal-power zone weights | $d=(127-V)/126$ | `PetrichorEngine::renderBlock`, `MultipathRumble::zoneWeights` |
 | Stiff string | $f_n=nf_0\sqrt{1+Bn^2}$ | B 3e-4 (A0) → 1e-4 (A2) → 8e-3 (C8); Railsback stretch | `PianoVoice::inharmonicity`, `stretchCents` |
 | String loss | $\sigma_n=\sigma_1+b_3f_n^2$ | T60 = 14 s × 0.045^(k−21)/87; b3 2.6e-7; aftersound 0.22σ at level 0.32 | `PianoVoice::promptT60`, `strike` |
-| Hammer | $F\propto t^{\kappa-1}e^{-t/\theta}$ | speed 0.35·17^v m/s; corner 650 Hz (C4, mf, h = 0.5); κ = 2.6 − v; 0 to 1 ms jitter | `PianoVoice::strike` |
+| Hammer | $F\propto t^{\kappa-1}e^{-t/\theta}$ | speed 0.35·17^v m/s; corner 580 Hz (C4, mf, h = 0.5) → 2.5 kHz tip at II; κ = 2.6 − 0.9v → 2; 0 to 1 ms jitter | `PianoVoice::strike`, `buildForce` |
+| Piano I ↔ II | $f_n=f^{\mathrm I}_n(f^{\mathrm{II}}_n/f^{\mathrm I}_n)^c$, $g_n=(1-c)\hat g^{\mathrm I}_n+c\hat g^{\mathrm{II}}_n$, $\sigma_n$ geometric | II: $\hat g\propto b^{n-1}/\sqrt n$, $b=0.16+0.5v^{1.5}+0.12(1-k_n)$; bell 6.9 f1, T60 0.35 s; tine T60 10 s·0.25^k | `PianoVoice::strike` |
+| Sympathetic resonance | 24 tuned combs A1–G♯3, loss LP 2.6 kHz | RT60 0.5 s (pedal up) → 3.5 s (down); gain 0.2 × resonance × (1 − c) | `SympatheticResonance` |
 
 ## 4. IPC contract (frontend ↔ backend)
 

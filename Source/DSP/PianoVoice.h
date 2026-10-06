@@ -19,6 +19,7 @@ struct StrikeSettings
     float absorption      = 0.5f;    // 0..1, scales alpha(f): how strongly distance darkens the strike
     float crackLevel      = 0.5f;    // broadband crack S(t) = A e^(-t/tau) n(t) in the hammer force
     float multipath       = 0.35f;   // 0..1, rolling multipath in the hammer-string contact
+    float character       = 0.0f;    // 0 = I, acoustic grand (softened); 1 = II, Rhodes-style tine piano
     bool  softPedal       = false;   // una corda
 };
 
@@ -87,6 +88,9 @@ public:
 
     /** Renders numSamples of mono output, overwriting out. */
     void render (float* out, int numSamples) noexcept;
+
+    /** Renders mono plus a stereo "side" signal (added left, subtracted right). */
+    void render (float* out, float* side, int numSamples) noexcept;
 
     bool  isActive() const noexcept            { return active; }
     bool  isStealing() const noexcept          { return stealing; }
@@ -165,6 +169,8 @@ private:
     float swellGain = 1.0f, swellTarget = 1.0f, swellStep = 0.0f;
     float lastCentre = -1.0f, lastEmphasis = -1.0f, lastTilt = 0.0f;
     float hissAmp = 0.0f;
+    float character = 0.0f; // I (0) .. II (1) of the latest strike
+    float lastSide = 0.0f;
     // Open-loop reference envelope of the strike (captured after contact, decays at the string's
     // slowest rate). Rain rides on this, never on the live energy, so it cannot sustain itself.
     float referenceEnergy = 0.0f, referenceDecay = 0.0f;

@@ -6,6 +6,7 @@
 #include "PianoVoice.h"
 #include "RainTexture.h"
 #include "StormWind.h"
+#include "SympatheticResonance.h"
 #include "WindAir.h"
 
 namespace petrichor
@@ -47,6 +48,8 @@ struct EngineParams
 
     // Global
     float tuningA4Hz     = 440.0f;
+    float character      = 0.0f;    // I (acoustic grand) .. II (Rhodes-style tine piano)
+    float resonance      = 0.5f;    // sympathetic string resonance (I side), 0..1
     float masterDb       = -2.0f;
 };
 
@@ -121,7 +124,8 @@ private:
     WindAir air;
     MultipathRumble rumble;
 
-    std::vector<float> voiceBuffer, pianoLeft, pianoRight, patterLeft, patterRight;
+    SympatheticResonance sympathetic;
+    std::vector<float> voiceBuffer, sideBuffer, pianoMono, pianoLeft, pianoRight, patterLeft, patterRight;
     std::array<std::vector<float>, MultipathRumble::kZones> sendBuffers;
 
     // What the rain hears of the piano, measured on the dry piano bus.

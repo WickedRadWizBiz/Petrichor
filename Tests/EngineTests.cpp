@@ -613,6 +613,72 @@ void testRainOverlayAndFuse()
     CHECK (fusedHigh > 2.0 * dryHigh, "fused rain adds texture inside the notes");
 }
 
+void testPianoCharacter()
+{
+    std::printf ("Piano I <-> II: softened grand to Rhodes-style tine\n");
+    auto renderVoice = [] (int key, int vel, float character) {
+        PianoVoice v;
+        v.prepare (kFs, 3);
+        StrikeSettings s;
+        s.character = character;
+        s.crackLevel = 0.5f;
+        s.multipath = 0.0f;
+        s.absorption = 0.0f;
+        v.strike (key, (float) vel / 127.0f, s);
+        std::vector<float> out ((size_t) (1.5 * kFs));
+        WindState calm;
+        VoiceWindSettings ws;
+        for (size_t pos = 0; pos < out.size(); pos += 32)
+        {
+            v.controlTick (calm, ws, 0.0f, 32.0f / (float) kFs);
+            v.render (out.data() + pos, (int) std::min<size_t> (32, out.size() - pos));
+        }
+        return out;
+    };
+
+    const size_t n = 1 << 15;
+    const auto grand = renderVoice (60, 90, 0.0f), tine = renderVoice (60, 90, 1.0f);
+    const auto gm = magnitudeSpectrum (grand, 1000, n), tm = magnitudeSpectrum (tine, 1000, n);
+    const double gc = centroidHz (gm, kFs, n), tc = centroidHz (tm, kFs, n);
+    std::printf ("  C4 V=90 spectral centroid: I %.0f Hz, II %.0f Hz\n", gc, tc);
+    CHECK (tc < 0.7 * gc, "II is rounder than I");
+
+    // II's partials are harmonic (a tine through a pickup); I's are stretched (stiff string).
+    const double f1 = peakHz (tm, kFs, n, 250.0, 275.0);
+    const double h3 = peakHz (tm, kFs, n, 3.0 * f1 * 0.99, 3.0 * f1 * 1.01);
+    std::printf ("  II: f1 %.2f Hz, partial 3 at %.2f Hz (3 f1 = %.2f)\n", f1, h3, 3.0 * f1);
+    CHECK (std::abs (h3 - 3.0 * f1) < 0.4, "II partials are harmonic");
+
+    // II barks harder when played harder: more 2nd harmonic relative to the fundamental.
+    auto secondHarmonic = [&] (int vel) {
+        const auto x = renderVoice (60, vel, 1.0f);
+        const auto m = magnitudeSpectrum (x, 500, n);
+        const double a1 = m[(size_t) std::lround (f1 * n / kFs)], a2 = m[(size_t) std::lround (2.0 * f1 * n / kFs)];
+        return 20.0 * std::log10 (a2 / a1);
+    };
+    const double soft = secondHarmonic (30), hard = secondHarmonic (127);
+    std::printf ("  II 2nd harmonic: V=30 %.1f dB, V=127 %.1f dB\n", soft, hard);
+    CHECK (hard > soft + 6.0, "the tine barks when struck hard");
+
+    // Sympathetic strings (I): with the pedal down the piano keeps ringing after a staccato note.
+    auto tail = [] (float resonance) {
+        PetrichorEngine e;
+        e.prepare (kFs, 512);
+        EngineParams p = dryParams();
+        p.resonance = resonance;
+        e.setParams (p);
+        std::vector<float> l, r;
+        render (e, 2.0, l, r, [&] (size_t pos) {
+            if (pos == 0) { e.setSustainPedal (true); e.noteOn (72, 100); }
+        });
+        const auto m = mono (l, r);
+        return energy (m, (size_t) (0.5 * kFs), (size_t) (2.0 * kFs));
+    };
+    const double dry = tail (0.0f), ringing = tail (1.0f);
+    std::printf ("  pedal-down tail energy: resonance off %.3e, on %.3e\n", dry, ringing);
+    CHECK (ringing > 1.05 * dry, "free strings ring along");
+}
+
 void testStabilityAndSilence()
 {
     std::printf ("Engine stability\n");
@@ -632,7 +698,7 @@ void testStabilityAndSilence()
         e.prepare (96000.0, 512);
         EngineParams p;
         p.windSpeedMs = 30.0f; p.turbulence = 1.0f; p.windPitch = 1.0f; p.windTimbre = 1.0f; p.windAir = 1.0f; p.windBlend = 0.5f;
-        p.rainBlend = 0.5f; p.rainFollow = 1.0f;
+        p.rainBlend = 0.5f; p.rainFollow = 1.0f; p.character = 0.5f; p.resonance = 1.0f;
         p.rainRateMMh = 150.0f; p.rainCoupling = 1.0f; p.rainLevel = 1.0f; p.rainSurface = 1.0f;
         p.rumbleMix = 1.0f; p.rumbleDecayS = 12.0f; p.crackLevel = 1.0f; p.sustain = 3.0f; p.hammerHardness = 1.0f;
         e.setParams (p);
@@ -693,6 +759,7 @@ int main()
     testThunderIsTheHammer();
     testWindFuse();
     testRainOverlayAndFuse();
+    testPianoCharacter();
     testStabilityAndSilence();
     testPerformance();
 

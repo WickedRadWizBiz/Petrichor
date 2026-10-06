@@ -29,6 +29,7 @@ add_library(petrichor_engine STATIC
     Source/DSP/RainTexture.cpp
     Source/DSP/RainTexture.h
     Source/DSP/StormWind.h
+    Source/DSP/SympatheticResonance.h
     Source/DSP/WindAir.h
 )
 target_include_directories(petrichor_engine PUBLIC Source/DSP)

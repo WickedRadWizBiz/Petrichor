@@ -117,7 +117,11 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
 
     //==========================================================================
     // String: stiff-string partials, unison mistuning and frequency-dependent loss.
-    fundamentalHz = midiToHz ((float) midiKey, s.a4Hz) * std::exp2 (stretchCents (k) / 1200.0f);
+    // I <-> II: the acoustic string (I) morphs, partial by partial, into a Rhodes-style tine (II).
+    const float c = clampf (s.character, 0.0f, 1.0f);
+    character = c;
+
+    fundamentalHz = midiToHz ((float) midiKey, s.a4Hz) * std::exp2 (stretchCents (k) * (1.0f - c) / 1200.0f);
     const float B = inharmonicity (k);
     const float f0 = fundamentalHz / std::sqrt (1.0f + B);
     const float strikePoint = 0.122f - 0.05f * kNorm * kNorm; // ~1/8 of the speaking length
@@ -130,52 +134,107 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
     const float hammerSpeed = 0.35f * std::pow (17.0f, v); // ~0.35 .. 6 m/s
     constexpr float referenceSpeed = 2.08f;                // mezzo-forte, V ~ 80
     const float hardness = clampf (s.hammerHardness, 0.0f, 1.0f) - (s.softPedal ? 0.25f : 0.0f);
-    const float cornerRef = 650.0f * std::exp2 (0.6f * (float) (k - 60) / 12.0f) * std::exp2 ((hardness - 0.5f) * 1.6f);
-    const float corner = cornerRef * std::pow (hammerSpeed / referenceSpeed, 0.6f);
-    const float order = 2.6f - 1.0f * v;
-    constexpr float orderRef = 2.6f - 0.63f;
+    // I: a slightly darker felt than a raw model (smoother). II: a soft neoprene tip that leaves the
+    // tine's few harmonics alone; its brightness comes from the pickup "bark" below instead.
+    const float feltRef  = 580.0f * std::exp2 (0.6f * (float) (k - 60) / 12.0f);
+    const float tipRef   = 2500.0f * std::exp2 (0.3f * (float) (k - 60) / 12.0f);
+    const float cornerRef = feltRef * std::pow (tipRef / feltRef, c) * std::exp2 ((hardness - 0.5f) * 1.6f * (1.0f - 0.6f * c));
+    const float corner = cornerRef * std::pow (hammerSpeed / referenceSpeed, 0.6f * (1.0f - 0.6f * c));
+    const float order = lerpf (2.6f - 0.9f * v, 2.0f, c);
+    const float orderRef = lerpf (2.6f - 0.9f * 0.63f, 2.0f, c);
     const float impulse = v * (s.softPedal ? 0.75f : 1.0f);
 
     // Distant strikes leave a louder, longer aftersound: decay and "wet" share rise as V falls.
     const float decayScale = std::max (s.decayScale, 0.05f);
     const float sigma1 = 6.91f / (promptT60 (k) * decayScale);
     const float b3 = 2.6e-7f / decayScale;
-    const float afterDecay = 0.22f * (1.0f - 0.3f * d);
-    const float afterLevel = (s.softPedal ? 0.5f : 0.32f) * (1.0f + 0.5f * d);
+
+    // II: a tine sustains long and smooth; its pickup harmonics ("bark") fade into a near-sine.
+    const float tineT60 = 10.0f * std::pow (0.25f, kNorm) * decayScale;    // ~10 s bass .. 2.5 s C8
+    const float tineSigma1 = 6.91f / tineT60;
+    const float bark = clampf (0.16f + 0.5f * std::pow (v, 1.5f) + 0.12f * (1.0f - kNorm), 0.0f, 0.8f);
+    const float bellRatio = 6.9f;                                       // tine overtone: an inharmonic "ping"
+    const float bellLevel = (0.12f + 0.3f * v) * (0.5f + 0.5f * kNorm);
+
+    const float afterDecay = lerpf (0.22f * (1.0f - 0.3f * d), 0.75f, c);
+    const float afterLevel = lerpf ((s.softPedal ? 0.5f : 0.32f) * (1.0f + 0.5f * d), 0.18f, c);
     const float previousCentre = lastCentre, previousEmphasis = lastEmphasis, previousTilt = lastTilt;
-    const float unison = std::max (s.unisonCents, 0.0f) * (k < 32 ? 0.5f : 1.0f) * (0.6f + 0.8f * hash01 ((uint32_t) k, 7));
+    const float unison = lerpf (std::max (s.unisonCents, 0.0f) * (k < 32 ? 0.5f : 1.0f) * (0.6f + 0.8f * hash01 ((uint32_t) k, 7)),
+                                0.35f, c); // a single tine: just a whisper of chorus between the two modes
 
     float normAcc = 0.0f, hissAcc = 0.0f, hammerEnergy = 0.0f;
     int m = 0;
+
+    // Unit-energy references for the two spectra, so the morph keeps loudness steady.
+    float acousticEnergy = 0.0f, tineEnergy = 0.0f;
+    for (int n = 1; n <= kMaxPartials; ++n)
+    {
+        const float fn = (float) n * f0 * std::sqrt (1.0f + B * (float) (n * n));
+        if (fn > fMax) break;
+        const float comb = 0.03f + 0.97f * std::abs (std::sin ((float) n * kPi * strikePoint));
+        const float r2 = (fn / 90.0f) * (fn / 90.0f);
+        const float a = comb * (r2 / (1.0f + r2)) / std::sqrt (1.0f + (fn / 6000.0f) * (fn / 6000.0f))
+                      * std::pow (1.0f + (fn / feltRef) * (fn / feltRef), -0.5f * (2.6f - 0.9f * 0.63f));
+        const float t = (n == 1 ? 1.0f : std::pow (bark, (float) (n - 1)) / std::sqrt ((float) n));
+        acousticEnergy += a * a;
+        tineEnergy += t * t;
+    }
+    const float acousticNorm = 1.0f / std::sqrt (std::max (acousticEnergy, 1.0e-12f));
+    const float tineNorm = 1.0f / std::sqrt (std::max (tineEnergy + bellLevel * bellLevel, 1.0e-12f));
     referenceDecay = 2.0f * sigma1 * afterDecay; // energy decay rate of the slowest mode
 
     for (int n = 1; n <= kMaxPartials; ++n)
     {
-        const float fn = (float) n * f0 * std::sqrt (1.0f + B * (float) (n * n));
-        if (fn > fMax)
+        const float fAcoustic = (float) n * f0 * std::sqrt (1.0f + B * (float) (n * n));
+        if (fAcoustic > fMax)
             break;
 
+        // I: stiff string, strike-position comb, soundboard radiation (top rolled off a little
+        // earlier than a raw model, at 6 kHz, for a smoother tone).
         const float comb = 0.03f + 0.97f * std::abs (std::sin ((float) n * kPi * strikePoint));
-        const float r2 = (fn / 90.0f) * (fn / 90.0f);
-        const float radiation = (r2 / (1.0f + r2)) / std::sqrt (1.0f + (fn / 7000.0f) * (fn / 7000.0f));
+        const float r2 = (fAcoustic / 90.0f) * (fAcoustic / 90.0f);
+        const float radiation = (r2 / (1.0f + r2)) / std::sqrt (1.0f + (fAcoustic / 6000.0f) * (fAcoustic / 6000.0f));
         const float soundboard = 0.8f + 0.4f * hash01 ((uint32_t) k, 100u + (uint32_t) n);
-        const float shape = comb * radiation * soundboard;
+        const float acousticShape = comb * radiation * soundboard * acousticNorm;
+
+        // II: the tine's pickup output - harmonic, a strong fundamental and a velocity-driven bark;
+        // partial 7's prompt mode becomes the bell ping (below).
+        const float tineShape = (n == 1 ? 1.0f : std::pow (bark, (float) (n - 1)) / std::sqrt ((float) n)) * tineNorm;
+        const float fTine = (float) n * fundamentalHz;
+
+        const float fn = fAcoustic * std::pow (fTine / fAcoustic, c);
+        const float shape = (1.0f - c) * acousticShape + c * tineShape;
 
         // Loudness is normalised against the mezzo-forte hammer spectrum of this key.
-        const float reference = shape * std::pow (1.0f + (fn / cornerRef) * (fn / cornerRef), -0.5f * orderRef);
+        const float reference = shape * std::pow (1.0f + (fn / cornerRef) * (fn / cornerRef), -0.5f * orderRef)
+                              + (n == 7 ? c * bellLevel * tineNorm : 0.0f);
         normAcc += reference * reference;
 
         const float g = shape * atmos::absorptionGain (fn, absorbingDistance);
         const float cents = unison * (0.75f + 0.5f * hash01 ((uint32_t) k, 300u + (uint32_t) n));
-        const float sigma = sigma1 + b3 * fn * fn;
+        const float sigmaAcoustic = sigma1 + b3 * fn * fn;
+        const float sigmaTine = tineSigma1 * (1.0f + 0.9f * (float) (n - 1));
+        const float sigma = sigmaAcoustic * std::pow (sigmaTine / sigmaAcoustic, c);
 
         // Rain hiss excites the upper partials most: rain is not a bass sound.
         const float rainShape = (fn / 400.0f) / std::sqrt (1.0f + (fn / 400.0f) * (fn / 400.0f))
                               / std::sqrt (1.0f + (fn / 6000.0f) * (fn / 6000.0f));
 
-        const float modeFreq[2]  = { fn * std::exp2 (cents / 2400.0f), fn * std::exp2 (-cents / 2400.0f) };
-        const float modeSigma[2] = { sigma, sigma * afterDecay };
-        const float modeDrive[2] = { g, g * afterLevel };
+        float modeFreq[2]  = { fn * std::exp2 (cents / 2400.0f), fn * std::exp2 (-cents / 2400.0f) };
+        float modeSigma[2] = { sigma, sigma * afterDecay };
+        float modeDrive[2] = { g, g * afterLevel };
+
+        if (n == 7 && c > 0.0f)
+        {
+            // The tine's own overtone: a short, slightly inharmonic bell at the attack.
+            const float bellHz = bellRatio * fundamentalHz;
+            if (bellHz < fMax)
+            {
+                modeFreq[0]  = modeFreq[0] * std::pow (bellHz / modeFreq[0], c);
+                modeSigma[0] = modeSigma[0] * std::pow ((6.91f / 0.35f) / modeSigma[0], c);
+                modeDrive[0] = (1.0f - c) * modeDrive[0] + c * bellLevel * tineNorm * atmos::absorptionGain (bellHz, absorbingDistance);
+            }
+        }
 
         // Energy this strike will put in the partial: |drive x felt-pulse spectrum|^2 (analytic, open loop).
         const float pulseMagnitude = impulse * std::pow (1.0f + (fn / corner) * (fn / corner), -0.5f * order);
@@ -246,7 +305,7 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
 
     // The soundboard knock is the only part of the strike heard directly.
     {
-        const float knock = std::max (s.crackLevel, 0.0f) * impulse * 0.5f;
+        const float knock = std::max (s.crackLevel, 0.0f) * impulse * 0.5f * (1.0f - 0.6f * c);
         const float tauThump = 0.035f * (1.0f - 0.5f * kNorm);
         const float thumpHz = 70.0f + 90.0f * kNorm;
         const float rho = std::exp (-1.0f / (tauThump * fs));
@@ -257,7 +316,10 @@ void PianoVoice::strike (int midiKey, float velocity01, const StrikeSettings& s)
         thump.active = knock > 0.0f;
     }
 
-    outputGain = 0.1f * keyLoudnessTrim (kNorm);
+    // II's own balance: a tine's bass lives in its fundamental and its treble rings louder.
+    const float tineTrimDb = 9.0f * std::max (0.0f, 0.45f - kNorm) / 0.45f
+                           - 3.0f * clampf ((kNorm - 0.45f) / 0.4f, 0.0f, 1.0f);
+    outputGain = 0.1f * keyLoudnessTrim (kNorm) * dbToGain (c * tineTrimDb);
     env = 1.0f;
     damping = false;
     stealing = false;
@@ -297,7 +359,9 @@ void PianoVoice::buildForce (const StrikeSettings& s, float kNorm, float corner,
     if (crack > 0.0f)
     {
         // Harder strikes crack more: the felt stiffens and the contact turns noisy.
-        const float amp = crack * 0.35f * impulse * std::pow (impulse, 1.5f) / std::sqrt (0.5f * tauCrack * fs);
+        // I: a touch gentler than a raw model; II: a neoprene tip barely cracks at all.
+        const float amp = crack * 0.28f * (1.0f - 0.9f * character) * impulse * std::pow (impulse, 1.5f)
+                        / std::sqrt (0.5f * tauCrack * fs);
         const float decay = std::exp (-1.0f / (tauCrack * fs));
         float e = amp;
         for (int i = 0; i < crackLength; ++i)
@@ -579,7 +643,12 @@ float PianoVoice::tickModes() noexcept
         }
     }
 
-    return ((acc[0] + acc[1]) + (acc[2] + acc[3])) + ((acc[4] + acc[5]) + (acc[6] + acc[7]));
+    // Even lanes hold prompt modes, odd lanes aftersound modes: their difference is a stereo "side"
+    // that wanders as the two beat, like a piano recorded with a spaced pair.
+    const float prompt = (acc[0] + acc[2]) + (acc[4] + acc[6]);
+    const float after  = (acc[1] + acc[3]) + (acc[5] + acc[7]);
+    lastSide = prompt - after;
+    return prompt + after;
 }
 
 float PianoVoice::tickModesDriven (float f) noexcept
@@ -600,7 +669,12 @@ float PianoVoice::tickModesDriven (float f) noexcept
         }
     }
 
-    return ((acc[0] + acc[1]) + (acc[2] + acc[3])) + ((acc[4] + acc[5]) + (acc[6] + acc[7]));
+    // Even lanes hold prompt modes, odd lanes aftersound modes: their difference is a stereo "side"
+    // that wanders as the two beat, like a piano recorded with a spaced pair.
+    const float prompt = (acc[0] + acc[2]) + (acc[4] + acc[6]);
+    const float after  = (acc[1] + acc[3]) + (acc[5] + acc[7]);
+    lastSide = prompt - after;
+    return prompt + after;
 }
 
 float PianoVoice::tickThump() noexcept
@@ -627,11 +701,21 @@ float PianoVoice::tickThump() noexcept
 
 void PianoVoice::render (float* out, int numSamples) noexcept
 {
+    render (out, nullptr, numSamples);
+}
+
+void PianoVoice::render (float* out, float* side, int numSamples) noexcept
+{
     if (! active)
     {
         std::fill (out, out + numSamples, 0.0f);
+        if (side != nullptr)
+            std::fill (side, side + numSamples, 0.0f);
         return;
     }
+
+    // Stereo width of the mode pair: a little for the grand (I), more for the tine (II).
+    const float width = 0.22f + 0.33f * character;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -644,7 +728,9 @@ void PianoVoice::render (float* out, int numSamples) noexcept
         if (damping)
             env *= dampCoef;
 
+        const float gain = swellGain * env * outputGain;
         y *= swellGain * env;
+        float sd = lastSide * gain * width;
 
         if (thump.active)
             y += tickThump();
@@ -657,6 +743,8 @@ void PianoVoice::render (float* out, int numSamples) noexcept
             if (stealGain <= 0.0f)
             {
                 std::fill (out + i, out + numSamples, 0.0f);
+                if (side != nullptr)
+                    std::fill (side + i, side + numSamples, 0.0f);
                 active = false;
                 stealing = false;
                 std::fill (std::begin (re), std::end (re), 0.0f);
@@ -667,9 +755,12 @@ void PianoVoice::render (float* out, int numSamples) noexcept
                 return;
             }
             y *= stealGain;
+            sd *= stealGain;
         }
 
         out[i] = y;
+        if (side != nullptr)
+            side[i] = sd;
     }
 }
 

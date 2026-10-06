@@ -20,6 +20,7 @@ Wind and Rain each have an **Overlay ↔ Fuse** slider. The blend is equal-power
 |---|---|---|
 | **Wind** | The wind is its own sound beside the piano: a roar that follows dynamic pressure ($\propto U^2$) and three wires whistling at $f = St\,U/D$ (`wind_air`). The notes are untouched. | The wind lives inside the notes: each note's pitch follows the local wind like an Aeolian tone ($f \propto U$), gusts tilt its brightness and sweep a resonance through its partials (`wind_pitch`, `wind_timbre`). |
 | **Rain** | A texturiser-style layer beside the piano: Marshall-Palmer grains driven by the wind's gusts *and* by the piano: louder playing brings denser, louder drops whose tone leans toward the piano's (`rain_follow`). | A texture modulation inside the piano sound: drops land on the ringing strings and sound in the chord's own partials, a rain hiss excites the strings' modes, and the drop patter modulates the tone grain by grain. Silent when nothing is sounding. |
+| **Piano I ↔ II** | I: the acoustic grand, softened: a darker felt, a gentler top end and less crack, with sympathetic string resonance | II: a Rhodes-style tine piano: harmonic partials with a round fundamental, a bell ping at the attack, pickup "bark" when struck hard, a soft tip and no crack |
 | **Thunder** | (no slider: always fused) | The strike is the lightning: velocity is distance, and the crack, the air absorption and the multipath roll all happen in the hammer-string contact. |
 
 ---
@@ -331,6 +332,22 @@ A strike at $V$ = 127 excites only the short, bright near zone, at 12 % of `rumb
 
 ### The piano (beyond the spec)
 
+#### I ↔ II: grand to tine
+
+`piano_character` $c$ morphs every partial of the voice (`PianoVoice::strike()`), captured when the key is struck:
+
+- **Frequency:** $f_n = f_n^{\mathrm{I}}\,(f_n^{\mathrm{II}}/f_n^{\mathrm{I}})^{c}$, from the stretched, inharmonic stiff string (I) to exact harmonics $n f_1$ of a tine heard through its pickup (II). Stretch tuning fades out with $c$.
+- **Spectrum:** $g_n = (1-c)\,\hat g^{\mathrm{I}}_n + c\,\hat g^{\mathrm{II}}_n$, each normalised to unit energy so loudness holds through the morph. II's pickup spectrum is $\hat g^{\mathrm{II}}_n \propto b^{\,n-1}/\sqrt n$ with bark $b = 0.16 + 0.5\,v^{1.5} + 0.12\,(1 - k_n)$ (up to 0.8): near-sine when played softly, a growl of 2nd and 3rd harmonics when struck hard. Partial 7's prompt mode becomes the tine's own overtone, a short bell at $6.9 f_1$ ($T_{60}$ 0.35 s).
+- **Decay:** $\sigma_n$ moves geometrically to the tine's $\sigma_1^{\mathrm{II}}(1 + 0.9(n-1))$, $T_{60}^{\mathrm{II}} = 10\,\mathrm{s}\cdot 0.25^{k_n}$: the bark fades into a long, smooth near-sine. The aftersound mode becomes a whisper of chorus (0.35 cents, level 0.18).
+- **Hammer:** the felt corner (580 Hz at C4, a little darker than a raw model) moves to a soft neoprene tip (2.5 kHz at C4, order 2, weaker velocity dependence); the crack falls to 10 % and the soundboard knock to 40 % at II.
+- **Stereo:** prompt and aftersound modes are summed into separate lanes; their difference is a "side" signal (width 0.22 at I, 0.55 at II, times `stereo_width`) that wanders as the two beat, like a spaced microphone pair.
+- **Level:** a II-specific trim (+9 dB tapering to 0 at mid-keyboard, −3 dB in the top octave) keeps the tine flat across the keyboard.
+
+#### Sympathetic resonance (I)
+
+After the "virtual resonance modelling" of digital pianos: undamped strings ring along with whatever is played. `SympatheticResonance` is a bank of 24 tuned feedback combs (A1 to G♯3, whose harmonics cover everything above), each with a one-pole loss filter at 2.6 kHz, fed by the dry piano bus. With the pedal down the strings ring for about 3.5 s; with it up, a faint 0.5 s bloom remains. Level `resonance` × $(1-c)$: a tine piano has no free strings.
+
+
 The spec treats the hammer strike as an ideal impulse $\delta(t)$ that triggers the weather. Petrichor renders an actual piano for that impulse to strike.
 
 #### Stiff string
@@ -437,7 +454,7 @@ All MIDI channels are treated alike. MIDI is handled in `PluginProcessor::handle
 
 ## Parameters
 
-All 25 parameters are defined in `Source/Plugin/Parameters.h`, which is the single source of truth. Each one is an automatable `AudioParameterFloat` with `ParameterID{id, 1}`, mapped by member pointer onto `EngineParams` in physical units. Where the "Skew centre" column has a value, that value sits at the knob's midpoint (`setSkewForCentre`). Unitless 0 to 1 controls are displayed as percentages.
+All 27 parameters are defined in `Source/Plugin/Parameters.h`, which is the single source of truth. Each one is an automatable `AudioParameterFloat` with `ParameterID{id, 1}`, mapped by member pointer onto `EngineParams` in physical units. Where the "Skew centre" column has a value, that value sits at the knob's midpoint (`setSkewForCentre`). Unitless 0 to 1 controls are displayed as percentages.
 
 | id | Name | Range | Default | Skew centre | What it does physically |
 |----|------|-------|---------|-------------|-------------------------|
@@ -445,6 +462,8 @@ All 25 parameters are defined in `Source/Plugin/Parameters.h`, which is the sing
 | `sustain` | Sustain | 0.3 – 3 × | 1.0 | 1.0 | Multiplies every string T60 by dividing $\sigma_1$ and $b_3$. |
 | `unison` | String Detune | 0 – 4 ct | 1.2 | | Detune between the prompt and aftersound modes of each partial, which causes unison beating. |
 | `stereo_width` | Stereo Width | 0 – 1 | 0.7 | | Keyboard pan spread, bass left and treble right, up to ±0.85. |
+| `piano_character` | Piano I/II | 0 – 1 | 0 | | I (acoustic grand, softened) ↔ II (Rhodes-style tine); morphs every partial. |
+| `resonance` | String Resonance | 0 – 1 | 0.5 | | I: sympathetic string resonance, blooming with the sustain pedal. |
 | `piano_level` | Piano Level | −24 – +6 dB | 0 | | Gain of the string bus. Rumble sends are taken after it. |
 | `tuning` | Tuning A4 | 415 – 466 Hz | 440 | | Reference pitch, before stretch tuning. |
 | `storm_distance` | Storm Distance | 50 – 4000 m | 1200 | 800 | $x_\mathrm{max}$: the distance of a velocity-1 strike. Velocity 127 is always overhead. |
@@ -512,7 +531,7 @@ cmake --build build-engine --parallel
 ctest --test-dir build-engine --output-on-failure   # or: ./build-engine/PetrichorTests
 
 mkdir -p renders
-./build-engine/PetrichorRender renders               # writes 5 demo WAVs (24-bit, 48 kHz, stereo)
+./build-engine/PetrichorRender renders               # writes 6 demo WAVs (24-bit, 48 kHz, stereo)
 ./build-engine/PetrichorRender --calibrate           # per-key loudness table
 ```
 
@@ -525,10 +544,11 @@ mkdir -p renders
 | `03_rain_overlay_to_fuse.wav` | A slow phrase while `rain_blend` sweeps from an overlay rain layer that follows the piano (0–8 s) to rain that only exists inside the notes (from about 24 s) |
 | `04_storm_prelude.wav` | A short D-minor prelude as the storm builds (wind 4 → 16 m/s, rain 3 → 28 mm/h), with a fortissimo strike and distant rumbles in the coda |
 | `05_dry_piano.wav` | The bare instrument: A0 to A7 at V = 90, then a C chord at V = 20 to 120 |
+| `06_piano_I_to_II.wav` | The same phrase three times: the grand (I), halfway, and the Rhodes-style tine (II), with a hard hit (bark) and a soft one (near-sine) |
 
-`--calibrate` strikes every third key from A0 to C8 at V = 80, with all weather off. It prints the RMS level of the first 0.5 s, after a 100 Hz high-pass. Use it after any change that affects level, and keep the curve flat.
+`--calibrate [c]` strikes every third key (at piano character c, default 0) from A0 to C8 at V = 80, with all weather off. It prints the RMS level of the first 0.5 s, after a 100 Hz high-pass. Use it after any change that affects level, and keep the curve flat.
 
-The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 44 checks in 15 tests:
+The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 48 checks in 16 tests:
 
 - the Marshall-Palmer $\Lambda$ and the flux-weighted sampling,
 - $v_T$ and the vector sum,
@@ -543,6 +563,7 @@ The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 44
 - thunder in the hammer-string contact (one contact when close, a rolling train when distant; the crack heard only through the string),
 - wind overlay leaving pitch alone and wind fuse bending it,
 - overlay rain following the piano, fused rain silent without notes and texturing sustained ones,
+- piano I ↔ II: II rounder than I, harmonic, barking harder when struck harder; sympathetic strings ringing with the pedal,
 - stability with extreme settings at 96 kHz (finite output, peak ≤ 1),
 - 64 sustained voices with all weather running faster than real time.
 
