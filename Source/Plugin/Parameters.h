@@ -1,6 +1,10 @@
 #pragma once
 
-#include <JuceHeader.h>
+// PETRICHOR_SPECS_ONLY: just the parameter table, without JUCE (used by the browser build in Tools/web).
+#if ! defined (PETRICHOR_SPECS_ONLY)
+ #include <JuceHeader.h>
+#endif
+#include <array>
 #include "PetrichorEngine.h"
 
 namespace petrichor::params
@@ -61,6 +65,7 @@ inline const std::array<Spec, 27>& all()
     return specs;
 }
 
+#if ! defined (PETRICHOR_SPECS_ONLY)
 inline juce::NormalisableRange<float> rangeFor (const Spec& s)
 {
     juce::NormalisableRange<float> range (s.min, s.max);
@@ -99,5 +104,6 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     }
     return layout;
 }
+#endif
 
 } // namespace petrichor::params

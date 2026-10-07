@@ -601,6 +601,18 @@ The test suite (`Tests/EngineTests.cpp`) has no framework dependency. It runs 66
 - stability with extreme settings at 96 kHz (finite output, peak ≤ 1),
 - 64 sustained voices with all weather running faster than real time.
 
+### In a browser (quick tests)
+
+`Tools/web/build_web.py` builds a one-page browser version: the engine compiled to WebAssembly (clang's `wasm32-wasi` target), running in an AudioWorklet (or on the main thread where a browser refuses worklets), driven by the plug-in's own UI through a stand-in for the JUCE backend (`Tools/web/shell.js`). The parameter table is the plug-in's (`Parameters.h` with `PETRICHOR_SPECS_ONLY`), so nothing can drift. The page adds computer-keyboard playing (A S D F … from C4, W E T Y U O P the black keys, Z/X octave, C/V velocity, Space the sustain pedal) and Web MIDI where the browser allows it.
+
+```sh
+sudo apt install wasi-libc libc++-18-dev-wasm32 libc++abi-18-dev-wasm32 libclang-rt-18-dev-wasm32
+(cd frontend && npm run build)
+python3 Tools/web/build_web.py out/petrichor-web.html    # one 2.6 MB file, everything inlined
+```
+
+The output is an HTML fragment for hosts that wrap pages in their own document; wrap it in `<!doctype html><html><body>…</body></html>` to open it from disk or a local server. The engine renders a typical chord about 11× faster than real time in the browser, and 64 voices with all the weather about 2×.
+
 ### Full plug-in
 
 ```sh
