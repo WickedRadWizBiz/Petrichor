@@ -1,6 +1,6 @@
 // Offline renderer: plays scripted performances through the engine and writes WAV files.
 //   PetrichorRender <output-dir>            render the demo pieces
-//   PetrichorRender --calibrate [I/II]      print per-key loudness at a fixed velocity (0 = I, 1 = II)
+//   PetrichorRender --calibrate [I/II] [step] print per-key loudness at a fixed velocity (0 = I, 1 = II), every step keys
 
 #include <algorithm>
 #include <cstdio>
@@ -301,7 +301,7 @@ void dryPiano (const std::string& dir)
     renderScore (dir + "/05_dry_piano.wav", s, t + 2.0, p);
 }
 
-// 6. Piano I -> II: the same phrase as the softened grand (I), halfway, and the Rhodes-style tine (II).
+// 6. Piano I -> II: the same phrase as the measured grand (I), halfway, and the Rhodes-style tine (II).
 void pianoCharacter (const std::string& dir)
 {
     Score s;
@@ -332,11 +332,39 @@ void pianoCharacter (const std::string& dir)
     });
 }
 
+// 7. The thunder rolling through the low strings: the same low phrase with the roll off, at its
+//    default depth, and at full depth - darker and a few cents lower while it rolls, never louder.
+void thunderRoll (const std::string& dir)
+{
+    Score s;
+    const double section = 11.0;
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        const double t0 = 0.4 + section * pass;
+        s.pedal (t0 - 0.05, true);
+        s.note (t0, 21, 46, 3.2);                         // A0, distant
+        s.note (t0 + 2.6, 28, 70, 3.0);                   // E1
+        s.chord (t0 + 5.2, { 33, 40, 45, 52 }, 58, 4.6, 0.08); // A1 power chord, the upper notes untouched
+        s.pedal (t0 + section - 0.6, false);
+    }
+
+    EngineParams p;
+    p.windSpeedMs = 2.0f;
+    p.windAir = 0.0f;
+    p.rainLevel = 0.0f;
+    p.sustain = 1.3f;
+    p.rumbleDecayS = 4.0f;
+    renderScore (dir + "/07_thunder_roll.wav", s, section * 3 + 0.5, p, [section] (double t, EngineParams& q) {
+        const int pass = std::min (2, (int) (t / section));
+        q.rumbleMix = pass == 0 ? 0.0f : (pass == 1 ? 0.5f : 1.0f);
+    });
+}
+
 //==============================================================================
-void calibrate (float character)
+void calibrate (float character, int step)
 {
     std::printf ("key  rms_dB(0.5s, >100Hz)\n");
-    for (int key = 21; key <= 108; key += 3)
+    for (int key = 21; key <= 108; key += std::max (step, 1))
     {
         PetrichorEngine e;
         e.prepare (kSampleRate, 256);
@@ -373,7 +401,7 @@ int main (int argc, char** argv)
     const std::string arg = argc > 1 ? argv[1] : ".";
     if (arg == "--calibrate")
     {
-        calibrate (argc > 2 ? (float) std::atof (argv[2]) : 0.0f);
+        calibrate (argc > 2 ? (float) std::atof (argv[2]) : 0.0f, argc > 3 ? std::atoi (argv[3]) : 3);
         return 0;
     }
 
@@ -383,5 +411,6 @@ int main (int argc, char** argv)
     stormPrelude (arg);
     dryPiano (arg);
     pianoCharacter (arg);
+    thunderRoll (arg);
     return 0;
 }

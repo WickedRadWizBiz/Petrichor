@@ -293,15 +293,17 @@ void testPitchAndInharmonicity()
     std::printf ("  A4 fundamental %.2f Hz\n", f1);
     CHECK (std::abs (f1 - 440.0) < 0.5, "A4 = %f", f1);
 
-    // C2: partial 12 sits above 12 f1 by sqrt(1 + B 144) / sqrt(1 + B).
+    // C2: Piano I's partials sit where the recorded Yamaha C5's did - stretched by the stiff
+    // string, irregularities and all (the measured ratio f_12 / f_1).
     const int key = 36;
     const auto c2 = renderKey (key, 0.8f, 2.0);
     mag = magnitudeSpectrum (c2, 1000, n);
     const double f1c = peakHz (mag, kFs, n, 60.0, 70.0);
-    const float B = PianoVoice::inharmonicity (key);
-    const double predicted = 12.0 * f1c * std::sqrt (1.0 + B * 144.0) / std::sqrt (1.0 + B);
+    PianoHybrid::Partials data;
+    PianoHybrid::instance().partials (key, 0.8f * 127.0f, data);
+    const double predicted = f1c * data.ratio[11];
     const double measured = peakHz (mag, kFs, n, predicted * 0.99, predicted * 1.01);
-    std::printf ("  C2 B=%.2e: partial 12 at %.2f Hz (harmonic %.2f, stiff-string prediction %.2f)\n", B, measured, 12.0 * f1c, predicted);
+    std::printf ("  C2: partial 12 at %.2f Hz (harmonic %.2f, measured ratio predicts %.2f)\n", measured, 12.0 * f1c, predicted);
     CHECK (std::abs (measured - predicted) < 0.6, "partial 12 %f vs %f", measured, predicted);
     CHECK (measured - 12.0 * f1c > 1.0, "partials are stretched");
 }
@@ -330,29 +332,178 @@ void testVelocityIsDistance()
     CHECK (close > 2.0 * far, "close crack vs distant thud: %f / %f", close, far);
 }
 
-void testRumbleScalesInverselyWithVelocity()
+void testThunderRollsInTheLowStrings()
 {
-    std::printf ("Thunder: rumble wet mix and decay grow as velocity falls\n");
-    auto tailRatio = [] (int velocity) {
+    std::printf ("Thunder: a roll in the low strings - colour, not volume\n");
+    CHECK (PianoVoice::thunderKeyWeight (60) == 0.0f && PianoVoice::thunderKeyWeight (72) == 0.0f, "nothing from middle C up");
+    CHECK (PianoVoice::thunderKeyWeight (21) == 1.0f && PianoVoice::thunderKeyWeight (33) > PianoVoice::thunderKeyWeight (48),
+           "the roll grows toward A0");
+
+    auto renderNote = [] (int key, int vel, float rumble) {
         PetrichorEngine e;
         e.prepare (kFs, 512);
         EngineParams p = dryParams();
-        p.rumbleMix = 0.6f;
-        p.rumbleDecayS = 4.0f;
+        p.rumbleMix = rumble;
+        p.rumbleDecayS = 3.5f;
         e.setParams (p);
         std::vector<float> l, r;
-        const size_t off = (size_t) (0.25 * kFs);
-        render (e, 3.0, l, r, [&] (size_t pos) {
-            if (pos == 0) e.noteOn (48, velocity);
-            if (pos >= off && pos < off + 128) e.noteOff (48);
-        });
-        const auto m = mono (l, r);
-        return energy (m, (size_t) (1.0 * kFs), (size_t) (3.0 * kFs)) / energy (m, 0, off);
+        render (e, 3.0, l, r, [&] (size_t pos) { if (pos == 0) e.noteOn (key, vel); });
+        return mono (l, r);
+    };
+    // The deepest darkening while it rolls: the lowest ratio of frame centroids, rolled / dry.
+    auto darkening = [] (const std::vector<float>& rolled, const std::vector<float>& dry) {
+        const size_t n = 4096;
+        double deepest = 1.0;
+        for (double t = 0.05; t < 2.0; t += 0.15)
+        {
+            const size_t at = (size_t) (t * kFs);
+            deepest = std::min (deepest, centroidHz (magnitudeSpectrum (rolled, at, n), kFs, n)
+                                       / centroidHz (magnitudeSpectrum (dry, at, n), kFs, n));
+        }
+        return deepest;
+    };
+    // The largest rise of the 50 ms level above its value at 0.3 s: a swell.
+    auto swell = [] (const std::vector<float>& x) {
+        const size_t frame = (size_t) (0.05 * kFs);
+        auto db = [&] (size_t at) { return 10.0 * std::log10 (energy (x, at, at + frame) / (double) frame + 1.0e-20); };
+        const double ref = db ((size_t) (0.3 * kFs));
+        double rise = 0.0;
+        for (size_t at = (size_t) (0.3 * kFs); at + frame < x.size(); at += frame)
+            rise = std::max (rise, db (at) - ref);
+        return rise;
     };
 
-    const double hard = tailRatio (120), soft = tailRatio (30);
-    std::printf ("  tail/direct energy: V=120 %.4f, V=30 %.4f\n", hard, soft);
-    CHECK (soft > 3.0 * hard, "soft strikes roll on longer: %f vs %f", soft, hard);
+    double deepest[3];
+    const int keys[3] = { 48, 28, 21 };
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto dry = renderNote (keys[i], 50, 0.0f), rolled = renderNote (keys[i], 50, 0.5f);
+        deepest[i] = darkening (rolled, dry);
+        const size_t a = (size_t) (0.05 * kFs), b = (size_t) (2.0 * kFs);
+        const double levelDb = 10.0 * std::log10 (energy (rolled, a, b) / energy (dry, a, b));
+        std::printf ("  key %d V=50: centroid down to %.0f %% while it rolls, level %+.2f dB, swell %.2f dB (dry %.2f dB)\n",
+                     keys[i], 100.0 * deepest[i], levelDb, swell (rolled), swell (dry));
+        CHECK (std::abs (levelDb) < 1.0, "colour, not volume (%f dB)", levelDb);
+        CHECK (swell (rolled) < swell (dry) + 1.0, "no swelling");
+    }
+    CHECK (deepest[2] < deepest[1] && deepest[1] < deepest[0], "the roll grows toward A0");
+    CHECK (deepest[2] < 0.8 && deepest[2] > 0.4, "darker in the lowest octave, but mildly");
+    CHECK (deepest[0] > 0.9, "barely there an octave below middle C");
+
+    // A little lower in pitch while it rolls: a few cents at most.
+    {
+        PianoVoice v;
+        v.prepare (kFs, 9);
+        StrikeSettings s;
+        s.rollDepth = 0.5f;
+        v.strike (21, 40.0f / 127.0f, s);
+        WindState calm;
+        VoiceWindSettings ws;
+        float lowest = 1.0f, darkest = 1.0e9f;
+        std::vector<float> out (32);
+        for (int block = 0; block < (int) (2.0 * kFs / 32); ++block)
+        {
+            v.controlTick (calm, ws, 0.0f, 32.0f / (float) kFs);
+            v.render (out.data(), 32);
+            lowest = std::min (lowest, v.getPitchRatio());
+            if (v.getThunderCutoffHz() > 0.0f)
+                darkest = std::min (darkest, v.getThunderCutoffHz());
+        }
+        const double cents = 1200.0 * std::log2 ((double) lowest);
+        std::printf ("  A0 V=40: pitch dips %.1f cents, low-pass down to %.0f Hz\n", cents, darkest);
+        CHECK (cents < -1.0 && cents > -8.5, "a slight droop, %f cents", cents);
+        CHECK (darkest < 1000.0f && darkest > 100.0f, "toward thunder's register, mildly");
+    }
+
+    // From middle C up the thunder is the hammer alone: a close strike is bit-identical with or without the roll.
+    const auto c5a = renderNote (72, 127, 0.0f), c5b = renderNote (72, 127, 1.0f);
+    double diff = 0.0;
+    for (size_t i = 0; i < c5a.size(); ++i) diff += std::abs ((double) c5a[i] - c5b[i]);
+    CHECK (diff == 0.0, "C5 untouched by the roll");
+}
+
+void testPianoIIsResynthesised()
+{
+    std::printf ("Piano I: resynthesised from the Salamander Grand (Yamaha C5)\n");
+    const auto& hybrid = PianoHybrid::instance();
+    CHECK (hybrid.isValid() && hybrid.getNumAnchors() == 30, "measured data loaded");
+
+    PianoVoice v;
+    v.prepare (kFs, 5);
+    StrikeSettings s;
+    s.crackLevel = 0.0f;
+    s.absorption = 0.0f;
+    s.multipath = 0.0f;
+    s.unisonCents = 0.0f;
+    s.rollDepth = 0.0f;
+    v.strike (60, 80.0f / 127.0f, s);
+    std::vector<float> out ((size_t) (4.0 * kFs));
+    WindState calm;
+    VoiceWindSettings ws;
+    for (size_t pos = 0; pos < out.size(); pos += 32)
+    {
+        v.controlTick (calm, ws, 0.0f, 32.0f / (float) kFs);
+        v.render (out.data() + pos, 32);
+    }
+
+    // The spectrum follows the recording: partials 2 and 3 against partial 1, as fitted.
+    PianoHybrid::Partials data;
+    hybrid.partials (60, 80.0f, data);
+    const size_t n = 16384, start = (size_t) (0.05 * kFs);
+    const double t = (start + n / 2) / kFs;
+    const auto mag = magnitudeSpectrum (out, start, n);
+    const double f1 = peakHz (mag, kFs, n, 250.0, 275.0);
+    auto level = [&] (int p) {
+        const double hz = f1 * data.ratio[p - 1];
+        const size_t bin = (size_t) std::lround (hz * n / kFs);
+        double peak = 0.0;
+        for (size_t i = bin - 3; i <= bin + 3; ++i) peak = std::max (peak, mag[i]);
+        return 20.0 * std::log10 (peak);
+    };
+    auto predicted = [&] (int p) {
+        const size_t q = (size_t) (p - 1);
+        const std::complex<double> z = data.amp[q] * std::exp (-data.sigma1[q] * t)
+            + data.amp[q] * data.after[q] * std::exp (-data.sigma2[q] * t) * std::polar (1.0, (double) data.phase[q]);
+        return 20.0 * std::log10 (std::abs (z));
+    };
+    for (int p : { 2, 3 })
+    {
+        const double got = level (p) - level (1), want = predicted (p) - predicted (1);
+        std::printf ("  C4 V=80: partial %d at %+.1f dB re partial 1 (recording %+.1f dB)\n", p, got, want);
+        CHECK (std::abs (got - want) < 2.5, "partial %d level %f vs %f", p, got, want);
+    }
+
+    // The double decay of a real string: the prompt sound falls away, the aftersound sings on.
+    auto fundamentalDb = [&] (double at) {
+        const size_t m = 8192;
+        const auto spec = magnitudeSpectrum (out, (size_t) (at * kFs), m);
+        double peak = 0.0;
+        const size_t bin = (size_t) std::lround (f1 * m / kFs);
+        for (size_t i = bin - 2; i <= bin + 2; ++i) peak = std::max (peak, spec[i]);
+        return 20.0 * std::log10 (peak);
+    };
+    const double early = (fundamentalDb (0.1) - fundamentalDb (0.9)) / 0.8;
+    const double late = (fundamentalDb (2.5) - fundamentalDb (3.7)) / 1.2;
+    std::printf ("  C4 fundamental decays %.1f dB/s at first, %.1f dB/s later\n", early, late);
+    CHECK (early > 1.8 * late && late > 0.0, "prompt sound, then aftersound");
+
+    // The strike's measured noise (hammer, action, soundboard) is in the attack, between the partials.
+    const size_t na = 4096;
+    const auto attack = magnitudeSpectrum (out, 0, na);
+    double total = 0.0, between = 0.0;
+    for (size_t i = 1; i < attack.size(); ++i)
+    {
+        const double hz = (double) i * kFs / na;
+        double nearest = 1.0e9;
+        for (int p = 1; p <= data.count; ++p)
+            nearest = std::min (nearest, std::abs (hz - f1 * data.ratio[p - 1]));
+        const double e = attack[i] * attack[i];
+        total += e;
+        if (nearest > 40.0 && hz > 30.0)
+            between += e;
+    }
+    std::printf ("  attack energy between the partials: %.2f %%\n", 100.0 * between / total);
+    CHECK (between > 0.002 * total, "the strike's own noise is there");
 }
 
 void testStrouhalLfoRate()
@@ -755,7 +906,8 @@ int main()
     testKolmogorovSpectrum();
     testPitchAndInharmonicity();
     testVelocityIsDistance();
-    testRumbleScalesInverselyWithVelocity();
+    testThunderRollsInTheLowStrings();
+    testPianoIIsResynthesised();
     testStrouhalLfoRate();
     testRainCoupling();
     testThunderIsTheHammer();

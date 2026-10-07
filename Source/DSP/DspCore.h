@@ -22,6 +22,7 @@ constexpr float kTwoPi = 6.28318530717958647692f;
 inline float clampf (float x, float lo, float hi) noexcept { return std::min (hi, std::max (lo, x)); }
 inline float lerpf (float a, float b, float t) noexcept     { return a + (b - a) * t; }
 inline float dbToGain (float db) noexcept                   { return std::pow (10.0f, db * 0.05f); }
+inline float gainToDb (float gain) noexcept                 { return 20.0f * std::log10 (std::max (gain, 1.0e-9f)); }
 inline float midiToHz (float note, float a4 = 440.0f) noexcept
 {
     return a4 * std::exp2 ((note - 69.0f) / 12.0f);

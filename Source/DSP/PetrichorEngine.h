@@ -2,7 +2,6 @@
 
 #include <array>
 #include <vector>
-#include "MultipathRumble.h"
 #include "PianoVoice.h"
 #include "RainTexture.h"
 #include "StormWind.h"
@@ -26,8 +25,8 @@ struct EngineParams
     float stormDistanceM = 600.0f;  // distance of a velocity-1 strike
     float crackLevel     = 0.3f;    // 0..1, broadband crack in the hammer force
     float airAbsorption  = 0.35f;   // 0..1, scales alpha(f) applied to the strike
-    float rumbleMix      = 0.2f;    // 0..1, multipath contact + body rumble
-    float rumbleDecayS   = 3.5f;    // RT60 of the farthest body-rumble zone
+    float rumbleMix      = 0.5f;    // 0..1, the thunder rolling through the low strings (and the hammer's re-contacts)
+    float rumbleDecayS   = 3.5f;    // how long the thunder rolls (s)
 
     // Wind (Kolmogorov / Strouhal)
     float windSpeedMs    = 8.0f;    // 0..30
@@ -122,11 +121,9 @@ private:
     StormWind wind;
     RainTexture rain;
     WindAir air;
-    MultipathRumble rumble;
 
     SympatheticResonance sympathetic;
     std::vector<float> voiceBuffer, sideBuffer, pianoMono, pianoLeft, pianoRight, patterLeft, patterRight;
-    std::array<std::vector<float>, MultipathRumble::kZones> sendBuffers;
 
     // What the rain hears of the piano, measured on the dry piano bus.
     PianoFollow pianoFollow;

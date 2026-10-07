@@ -24,8 +24,8 @@ void PetrichorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 
 double PetrichorAudioProcessor::getTailLengthSeconds() const
 {
-    // Longest string aftersound plus the far rumble zone.
-    return 12.0 + (double) apvts.getRawParameterValue ("rumble_decay")->load();
+    // The measured bass strings' aftersound rings for half a minute; the thunder's roll on top.
+    return 30.0 + (double) apvts.getRawParameterValue ("rumble_decay")->load();
 }
 
 void PetrichorAudioProcessor::handleMidi (const juce::MidiMessage& m) noexcept

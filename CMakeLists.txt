@@ -15,15 +15,30 @@ endif()
 #==============================================================================
 # Engine: pure C++17, no JUCE. Everything audible lives here.
 
+# Piano I's measured data (Tools/hybrid/analyse_salamander.py) is embedded as plain C++ by a small
+# host tool, so the engine needs no resource system.
+add_executable(petrichor_bin2cpp Tools/BinToCpp.cpp)
+set(PETRICHOR_HYBRID_BIN ${CMAKE_CURRENT_SOURCE_DIR}/Source/DSP/Data/piano_hybrid.bin)
+set(PETRICHOR_HYBRID_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/PianoHybridBlob.cpp)
+add_custom_command(
+    OUTPUT  ${PETRICHOR_HYBRID_CPP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND petrichor_bin2cpp ${PETRICHOR_HYBRID_BIN} ${PETRICHOR_HYBRID_CPP} pianoHybrid
+    DEPENDS petrichor_bin2cpp ${PETRICHOR_HYBRID_BIN}
+    COMMENT "Embedding the Piano I hybrid data"
+    VERBATIM
+)
+
 add_library(petrichor_engine STATIC
+    ${PETRICHOR_HYBRID_CPP}
     Source/DSP/Atmosphere.h
     Source/DSP/DspCore.h
     Source/DSP/KolmogorovNoise.cpp
     Source/DSP/KolmogorovNoise.h
-    Source/DSP/MultipathRumble.cpp
-    Source/DSP/MultipathRumble.h
     Source/DSP/PetrichorEngine.cpp
     Source/DSP/PetrichorEngine.h
+    Source/DSP/PianoHybrid.cpp
+    Source/DSP/PianoHybrid.h
     Source/DSP/PianoVoice.cpp
     Source/DSP/PianoVoice.h
     Source/DSP/RainTexture.cpp

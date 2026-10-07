@@ -27,7 +27,7 @@ const CAPTIONS = {
       Gusts raise R; &Lambda; = 4.1&thinsp;R<sup className="text-[0.5rem]">&minus;0.21</sup>
     </>
   ),
-  piano: <>I: the grand, softened &middot; II: a Rhodes-style tine</>,
+  piano: <>I: a real grand, resynthesised &middot; II: a Rhodes-style tine</>,
   master: <>Output gain</>,
 };
 

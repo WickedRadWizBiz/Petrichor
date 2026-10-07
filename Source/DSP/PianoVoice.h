@@ -3,6 +3,7 @@
 #include <vector>
 #include "Atmosphere.h"
 #include "KolmogorovNoise.h"
+#include "PianoHybrid.h"
 #include "StormWind.h"
 
 namespace petrichor
@@ -18,8 +19,10 @@ struct StrikeSettings
     float maxDistanceM    = 1200.0f; // distance of a velocity-1 strike
     float absorption      = 0.5f;    // 0..1, scales alpha(f): how strongly distance darkens the strike
     float crackLevel      = 0.5f;    // broadband crack S(t) = A e^(-t/tau) n(t) in the hammer force
-    float multipath       = 0.35f;   // 0..1, rolling multipath in the hammer-string contact
-    float character       = 0.0f;    // 0 = I, acoustic grand (softened); 1 = II, Rhodes-style tine piano
+    float multipath       = 0.2f;    // 0..1, rolling multipath in the hammer-string contact
+    float rollDepth       = 0.5f;    // 0..1, how far the thunder's roll darkens the low strings
+    float rollSeconds     = 3.5f;    // how long the thunder rolls (longer for distant strikes)
+    float character       = 0.0f;    // 0 = I, measured grand (Salamander C5); 1 = II, Rhodes-style tine piano
     bool  softPedal       = false;   // una corda
 };
 
@@ -34,19 +37,26 @@ struct VoiceWindSettings
 /**
     One piano key, synthesised modally.
 
-    Each partial n of the stiff string sits at f_n = n f0 sqrt(1 + B n^2) and is rendered by two
-    complex one-pole resonators (the in-phase "prompt" mode and the slowly decaying, slightly
-    detuned "aftersound" mode), giving the double decay and beating of real unison strings.
+    Each partial n is rendered by two complex one-pole resonators: the "prompt" mode and the slowly
+    decaying, slightly detuned "aftersound" mode, giving the double decay and beating of real unison
+    strings.
 
-    THUNDER IS THE HAMMER-STRING INTERACTION. The strike is the lightning impulse: MIDI velocity
-    becomes a distance x ~ (127 - V). The force the string receives is
-        F(t) = [gamma felt pulse + crack A e^(-t/tau) n(t)] * h(t)
-    where h(t) is a multipath train of delayed, progressively darker re-contacts spaced by the
-    string's own reflection time (strike point to termination and back). Close strikes are a single
-    sharp contact; distant ones roll on through several smeared contacts. Every partial's
-    excitation is weighted by exp(-alpha(f_n) x) with alpha ~ f^2 - the atmospheric absorption
-    applied exactly, partial by partial - and distant strikes also leave a louder, longer
-    aftersound (decay and "wet" share rise as velocity falls).
+    PIANO I IS RESYNTHESISED FROM A REAL PIANO. For I, every partial's frequency ratio, prompt and
+    aftersound amplitude, decay rates, beat and phase come from PianoHybrid (the Salamander Grand
+    Piano analysed into exactly this two-mode model), interpolated by key and velocity, and the
+    strike's own noise - hammer, action and soundboard, everything that is not on a partial - is
+    played back as the measured attack residual. II stays synthetic. The modes stay modes, so the
+    storm can still bend, darken and texture them.
+
+    THUNDER IS THE HAMMER-STRING INTERACTION, AND A ROLL IN THE LOW STRINGS. The strike is the
+    lightning impulse: MIDI velocity becomes a distance x ~ (127 - V). The force the string receives
+    is F(t) = [gamma felt pulse + crack A e^(-t/tau) n(t)] * h(t), where h(t) is a short train of
+    softer re-contacts, and every partial's excitation is weighted by exp(-alpha(f_n) x) with
+    alpha ~ f^2 - the atmospheric absorption applied exactly, partial by partial. Then, on keys
+    below middle C (more the lower the key, most in thunder's own register), the thunder rolls
+    through the string: a few irregular swells, each one a gentle low-pass sweep that darkens the
+    note toward thunder's register and lowers its pitch by a few cents, with a trace of level and a
+    soft body rumble - colour, not volume.
 
     WIND (fused) bends the note the way wind bends an Aeolian tone: f ~ U, so the pitch ratio is
     (U_key / U_mean)^depth, where U_key combines the storm's gusts with a per-key Kolmogorov
@@ -56,7 +66,7 @@ struct VoiceWindSettings
 
     RAIN (fused) lands on the strings: drops are impulses into the ringing modes, shaped by the
     drop's impact spectrum, and a continuous rain hiss excites the modes so the texture sounds in
-    the note's own partials. Both scale with the string's current energy.
+    the note's own partials. Both scale with the strike's open-loop reference energy.
 */
 class PianoVoice
 {
@@ -111,6 +121,10 @@ public:
     float getWindLfo() const noexcept    { return lfoValue; }
     float getPitchRatio() const noexcept { return currentRatio; }
 
+    /** Current thunder roll (0..1) and the low-pass corner it holds the note at (0 = open). */
+    float getThunderRoll() const noexcept     { return thunderNow; }
+    float getThunderCutoffHz() const noexcept { return lastThunderHz; }
+
     int getNumActiveModes() const noexcept { return numModes; }
     int getForceLength() const noexcept    { return forceLength; }
     const float* getForce() const noexcept { return force.data(); }
@@ -120,13 +134,17 @@ public:
     static float stretchCents (int midiKey) noexcept;
     static float promptT60 (int midiKey) noexcept;
 
+    /** How strongly the thunder rolls through a key: 0 from middle C up, rising to 1 at A0. */
+    static float thunderKeyWeight (int midiKey) noexcept;
+
 private:
     float tickModes() noexcept;
-    float tickModesDriven (float force) noexcept;
+    float tickModesDriven (float force, float crack) noexcept;
     float tickThump() noexcept;
+    float tickResidual() noexcept;
     void  buildForce (const StrikeSettings& s, float kNorm, float corner, float order, float impulse, float strikePoint);
     void  applyPitchRatio (float ratio) noexcept;
-    void  updateWeights (float centreHz, float emphasis, float tilt) noexcept;
+    void  updateWeights (float centreHz, float emphasis, float tilt, float thunderHz) noexcept;
     void  trimSilentModes() noexcept;
     void  foldEnvelopeIntoState() noexcept;
 
@@ -141,6 +159,9 @@ private:
     alignas (32) float zi0[kMaxModes] {};
     alignas (32) float omega[kMaxModes] {};
     alignas (32) float drive[kMaxModes] {};
+    alignas (32) float driveIm[kMaxModes] {};   // imaginary part: the aftersound's measured phase
+    alignas (32) float partShape[kMaxModes] {}; // how a drop on the string reaches each mode
+    alignas (32) float crackDrive[kMaxModes] {}; // how the crack's broadband force reaches each mode
     alignas (32) float hissDrive[kMaxModes] {};
     alignas (32) float weight[kMaxModes] {};
     alignas (32) float modeHz[kMaxModes] {};
@@ -150,6 +171,7 @@ private:
 
     // Hammer-string contact: the full excitation force, built at strike time (allocated in prepare).
     std::vector<float> force, scratch;
+    std::vector<float> crackForce, crackScratch; // the crack, kept apart: it drives the modes by their shape
     int maxExcitation = 0, maxForce = 0;
     int forceLength = 0, forcePos = 0;
 
@@ -167,7 +189,7 @@ private:
     float glideDepth = 0.0f;
     float currentRatio = 1.0f;
     float swellGain = 1.0f, swellTarget = 1.0f, swellStep = 0.0f;
-    float lastCentre = -1.0f, lastEmphasis = -1.0f, lastTilt = 0.0f;
+    float lastCentre = -1.0f, lastEmphasis = -1.0f, lastTilt = 0.0f, lastThunderHz = 0.0f;
     float hissAmp = 0.0f;
     float character = 0.0f; // I (0) .. II (1) of the latest strike
     float lastSide = 0.0f;
@@ -180,6 +202,33 @@ private:
     // Wind
     KolmogorovNoise lfo;
     float lfoValue = 0.0f;
+
+    // Piano I's measured partials for the latest strike (scratch, kept off the stack).
+    PianoHybrid::Partials measured;
+
+    // The measured attack residual (hammer, action and soundboard noise), re-pitched to the key.
+    struct Residual
+    {
+        bool  active = false;
+        const std::uint8_t* data[2] { nullptr, nullptr };
+        float gain[2] {};
+        float pos = 0.0f, inc = 1.0f;
+        int   length = 0, delay = 0;
+        OnePoleLP lp1, lp2; // distance darkens it like the strike
+    } residual;
+
+    // Thunder rolling through the low strings: a few irregular swells, t_k, width tau_k, height a_k.
+    struct ThunderRoll
+    {
+        static constexpr int kMaxSwells = 5;
+        int   count = 0;
+        float depth = 0.0f;
+        float time[kMaxSwells] {}, width[kMaxSwells] {}, height[kMaxSwells] {};
+    } roll;
+    float thunderNow = 0.0f, thunderMakeup = 1.0f, windSwell = 1.0f;
+    Svf   body;                       // the body's rumble under the roll
+    float bodyGain = 0.0f, bodyStep = 0.0f, bodyRef = 0.0f, bodyNoiseScale = 1.0f;
+    static constexpr float kBodyRumble = 0.08f; // body rumble at full roll, relative to the strike's amplitude
 
     // Soundboard knock that accompanies the strike (the only part heard directly).
     struct Thump

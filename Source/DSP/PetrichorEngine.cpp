@@ -27,13 +27,10 @@ void PetrichorEngine::prepare (double newSampleRate, int /*maxBlockSize*/)
     wind.reset (0xC0FFEEu);
     rain.prepare (sampleRate, 0xDA1Bu);
     air.prepare (sampleRate, 0xA1Bu);
-    rumble.prepare (sampleRate, 0x7E11u);
 
     sympathetic.prepare (sampleRate);
     for (auto* b : { &voiceBuffer, &sideBuffer, &pianoMono, &pianoLeft, &pianoRight, &patterLeft, &patterRight })
         b->assign (kControlBlock, 0.0f);
-    for (auto& b : sendBuffers)
-        b.assign (kControlBlock, 0.0f);
 
     pianoFollow = PianoFollow{};
     followEnergy = followSlopeEnergy = 0.0;
@@ -62,7 +59,9 @@ StrikeSettings PetrichorEngine::makeStrikeSettings() const noexcept
     s.maxDistanceM   = params.stormDistanceM;
     s.absorption     = params.airAbsorption;
     s.crackLevel     = params.crackLevel;
-    s.multipath      = params.rumbleMix;
+    s.multipath      = 0.67f * params.crackLevel; // the hammer's soft re-contacts belong to the strike
+    s.rollDepth      = params.rumbleMix;          // the thunder's roll through the low strings
+    s.rollSeconds    = params.rumbleDecayS;
     s.character      = params.character;
     s.softPedal      = softPedal;
     return s;
@@ -204,7 +203,6 @@ void PetrichorEngine::allSoundOff() noexcept
         slot.voice.kill();
         slot.keyHeld = slot.hasPending = false;
     }
-    rumble.clear();
     sympathetic.clear();
     sustainPedal = softPedal = false;
 }
@@ -254,9 +252,6 @@ void PetrichorEngine::controlTick (float dt) noexcept
     // Free strings ring along with the grand (I); a Rhodes (II) has none.
     sympathetic.setTuning (params.tuningA4Hz);
     sympathetic.setState (params.resonance * (1.0f - clampf (params.character, 0.0f, 1.0f)), sustainPedal, dt);
-
-    rumble.setDecay (params.rumbleDecayS);
-    rumble.controlTick (ws, dt);
 
     VoiceWindSettings vw;
     vw.fuse   = fuseAmount (params.windBlend);
@@ -319,15 +314,12 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
     std::fill (right, right + n, 0.0f);
     std::fill (pianoLeft.begin(), pianoLeft.begin() + n, 0.0f);
     std::fill (pianoRight.begin(), pianoRight.begin() + n, 0.0f);
-    for (auto& b : sendBuffers)
-        std::fill (b.begin(), b.begin() + n, 0.0f);
 
     numDropEvents = rain.beginBlock (n);
     landDrops();
 
     const float voiceGainTarget = dbToGain (params.pianoLevelDb);
     const float masterTarget = dbToGain (params.masterDb);
-    const float rumbleMix = clampf (params.rumbleMix, 0.0f, 1.0f);
 
     const float voiceGainStart = voiceGainSmoothed;
     voiceGainSmoothed += (voiceGainTarget - voiceGainSmoothed) * 0.05f;
@@ -344,13 +336,6 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
         float pl, pr;
         panGains (keyPan (v.getKey()), pl, pr);
 
-        // Wet mix rises as the strike gets farther away.
-        const float d = v.getDistanceFraction();
-        float zoneW[MultipathRumble::kZones];
-        MultipathRumble::zoneWeights (d, zoneW);
-        const float send = rumbleMix * (0.06f + 0.44f * d);
-        const float s0 = send * zoneW[0], s1 = send * zoneW[1], s2 = send * zoneW[2];
-
         const float width = clampf (params.stereoWidth, 0.0f, 1.0f);
         float g = voiceGainStart;
         for (int i = 0; i < n; ++i)
@@ -360,9 +345,6 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
             g += voiceGainStep;
             pianoLeft[(size_t) i]  += y * pl + sd;
             pianoRight[(size_t) i] += y * pr - sd;
-            sendBuffers[0][(size_t) i] += y * s0;
-            sendBuffers[1][(size_t) i] += y * s1;
-            sendBuffers[2][(size_t) i] += y * s2;
         }
     }
 
@@ -392,9 +374,6 @@ void PetrichorEngine::renderBlock (float* left, float* right, int n) noexcept
     followSamples += n;
 
     air.render (left, right, n);
-
-    const float* sends[MultipathRumble::kZones] = { sendBuffers[0].data(), sendBuffers[1].data(), sendBuffers[2].data() };
-    rumble.process (sends, left, right, n);
 
     // Master gain with a soft knee above -2 dBFS.
     const float masterStart = masterGainSmoothed;
